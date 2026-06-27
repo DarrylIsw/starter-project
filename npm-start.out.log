@@ -1,0 +1,28 @@
+
+> dandelion_starter@2.5.0 start
+> cross-env NODE_ENV=development NODE_OPTIONS=--openssl-legacy-provider node index.js
+
+Server started ! ✓
+
+Access URLs:
+-----------------------------------
+Localhost: http://localhost:3001
+      LAN: http://192.168.175.1:3001
+-----------------------------------
+Press CTRL-C to stop
+Webpack is building script...
+    
+Happy[js]: Version: 5.0.1. Threads: 5 (shared pool)
+Happy[js]: All set; signaling webpack to proceed.
+GET /api/docs 200 11ms
+GET /api/icons 200 2ms
+GET /api/health 200 2ms
+webpack built c7e7debe11c96e5eedd9 in 67319ms
+GET /api/research/schemes 200 2ms
+GET /api/research/drafts 200 2ms
+GET /api/letters 200 1ms
+GET /api/researcher-profiles 200 2ms
+webpack building...
+webpack built b9cd0d00269711def39b in 508ms
+webpack building...
+webpack built 83a2552e3562e013520e in 2094ms
