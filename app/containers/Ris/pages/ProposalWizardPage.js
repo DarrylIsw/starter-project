@@ -3,23 +3,34 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useHistory, useParams } from 'react-router-dom';
 import { useRis } from '../RisContext';
+import Icon from '../components/Icon';
 import {
   BUDGET_TABS, OUTPUT_EMPTY, SDGS, fileMeta, formatCurrency, uid
 } from '../data';
 import {
   STATUS,
   canEditDraft,
+  getSchemeMaximumBudget,
   getSchemeTitle,
   hasActiveDraftForScheme,
   isEligibleForScheme,
   isOpenScheme,
-  toDbDraftSnapshot,
+  transitionDraftStatus,
   validateDraftForSubmit,
   validateOutputDetails,
 } from '../workflow';
 import {
-  Button, Field, FileDrop, Modal, PageBack
+  AcademicYearSelect, Button, Field, FileDrop, Modal, PageBack
 } from '../components/Ui';
+import OutputDefinitionFields from '../components/OutputDefinitionFields';
+import { validateFile } from '../fileValidation';
+import { createActivityLog } from '../researcherProfileWorkflow';
+import {
+  getProposalAttachmentRequirements,
+  isBaseAttachmentRequirement,
+  normalizeSchemeOutputOptions,
+  outputDefinitionLabel,
+} from '../schemeConfiguration';
 
 const emptyProject = {
   title: '', mandatoryOutputPlan: '', additionalOutputPlan: '', additionalOutputPlans: [], targetTkt: '', ripRelation: '', researchCenterRelation: '', researchCenterOther: '', sdgs: [], integrated: null, courseName: '', academicYear: ''
@@ -30,41 +41,14 @@ const emptyMember = () => ({
 const emptyBudget = tab => ({
   id: uid('budget'), tab, component: '', name: '', volume: 1, unit: '', unitPrice: '', notes: ''
 });
+const emptyCustomOutput = () => {
+  const id = uid('output');
+  return { ...OUTPUT_EMPTY, id, type: 'tambahan', customOutput: true, planValue: `custom:${id}`, planLabel: 'Luaran Tambahan' };
+};
 
 const option = (value, label, defaults = {}, description = '') => ({
   value, label, defaults, description
 });
-
-const MANDATORY_OUTPUT_OPTIONS = [
-  ...Array.from({ length: 6 }, (_, index) => option(`sinta_${index + 1}`, `SINTA ${index + 1}`, { category: 'jurnal', journalTargetLevel: 'sinta', journalIndexTarget: `SINTA ${index + 1}`, publicationType: 'nasional' })),
-  option('scopus_q1', 'Artikel Jurnal Scopus Q1', { category: 'jurnal', journalTargetLevel: 'scopus', journalIndexTarget: 'Scopus Q1', publicationType: 'internasional', targetQuartile: 'Q1' }),
-  option('scopus_q2', 'Artikel Jurnal Scopus Q2', { category: 'jurnal', journalTargetLevel: 'scopus', journalIndexTarget: 'Scopus Q2', publicationType: 'internasional', targetQuartile: 'Q2' }),
-  option('scopus_q3', 'Artikel Jurnal Scopus Q3', { category: 'jurnal', journalTargetLevel: 'scopus', journalIndexTarget: 'Scopus Q3', publicationType: 'internasional', targetQuartile: 'Q3' }),
-  option('scopus_q4', 'Artikel Jurnal Scopus Q4', { category: 'jurnal', journalTargetLevel: 'scopus', journalIndexTarget: 'Scopus Q4', publicationType: 'internasional', targetQuartile: 'Q4' }),
-  option('paten_sederhana_registered', 'Paten Sederhana (terdaftar)', { category: 'hki', hkiType: 'paten_sederhana' }),
-  option('paten_registered', 'Paten (terdaftar)', { category: 'hki', hkiType: 'paten' }),
-];
-
-const ADDITIONAL_OUTPUT_OPTIONS = [
-  option('additional_scopus', 'Artikel ilmiah dimuat di jurnal Internasional - Scopus', { category: 'jurnal', journalTargetLevel: 'scopus', journalIndexTarget: 'Scopus', publicationType: 'internasional', targetQuartile: 'Q2' }),
-  option('additional_sinta', 'Artikel ilmiah dimuat di jurnal Nasional - SINTA', { category: 'jurnal', journalTargetLevel: 'sinta', journalIndexTarget: 'SINTA', publicationType: 'nasional' }),
-  option('prosiding_scopus', 'Prosiding terindeks Scopus', { category: 'prosiding', proceedingType: 'internasional', indexTarget: 'Scopus' }),
-  option('hki_paten', 'HKI - Paten', { category: 'hki', hkiType: 'paten' }),
-  option('hki_paten_sederhana', 'HKI - Paten Sederhana', { category: 'hki', hkiType: 'paten_sederhana' }),
-  option('hki_hak_cipta', 'HKI - Hak Cipta', { category: 'hki', hkiType: 'hak_cipta' }),
-  option('hki_merek_dagang', 'HKI - Merek Dagang', { category: 'hki', hkiType: 'merek_dagang' }),
-  option('hki_rahasia_dagang', 'HKI - Rahasia Dagang', { category: 'hki', hkiType: 'rahasia_dagang' }),
-  option('hki_desain_produk_industri', 'HKI - Desain Produk Industri', { category: 'hki', hkiType: 'desain_produk_industri' }),
-  option('hki_indikasi_geografis', 'HKI - Indikasi Geografis', { category: 'hki', hkiType: 'indikasi_geografis' }),
-  option('hki_perlindungan_varietas_tanaman', 'HKI - Perlindungan Varietas Tanaman', { category: 'hki', hkiType: 'perlindungan_varietas_tanaman' }),
-  option('hki_topografi_sirkuit', 'HKI - Perlindungan Topografi Sirkuit Terpadu', { category: 'hki', hkiType: 'topografi_sirkuit_terpadu' }),
-  option('teknologi_tepat_guna', 'Teknologi Tepat Guna', { category: 'produk_prototipe', productType: 'Teknologi Tepat Guna', expectedOutputForm: 'model' }),
-  option('model_purwarupa_desain', 'Model / Purwarupa / Desain / Karya Seni / Rekayasa Sosial', { category: 'produk_prototipe', productType: 'Model / Purwarupa / Desain / Karya Seni / Rekayasa Sosial', expectedOutputForm: 'model' }),
-  option('buku_ajar', 'Buku Ajar', { category: 'buku', bookType: 'full_book' }),
-  option('prototype', 'Prototype', { category: 'produk_prototipe', productType: 'Prototype', expectedOutputForm: 'prototype' }),
-  option('naskah_kebijakan', 'Naskah Kebijakan', { category: 'other' }),
-  option('karya_monumental', 'Karya Monumental', { category: 'other' }),
-];
 
 const TKT_OPTIONS = [
   option('none', 'None'),
@@ -100,14 +84,6 @@ const RESEARCH_CENTER_OPTIONS = [
   option('other', 'Other'),
 ];
 
-const PLAN_ALIASES = {
-  jurnal: 'scopus_q2',
-  prosiding: 'prosiding_scopus',
-  buku: 'buku_ajar',
-  hki: 'paten_registered',
-  'produk/prototipe': 'prototype',
-  produk_prototipe: 'prototype',
-};
 const RIP_ALIASES = {
   sesuai_rip: 'ict_based',
   tidak_sesuai: 'none',
@@ -115,20 +91,11 @@ const RIP_ALIASES = {
   business_digital_behavior_technopreneurship: 'business_digital_behavior_technopreneurship',
 };
 
-const allPlanOptions = [...MANDATORY_OUTPUT_OPTIONS, ...ADDITIONAL_OUTPUT_OPTIONS];
-const planOptionFor = value => allPlanOptions.find(item => item.value === value) || allPlanOptions.find(item => item.value === PLAN_ALIASES[value]);
-const normalizePlanValue = value => PLAN_ALIASES[value] || value || '';
 const normalizeProjectState = source => {
   const value = source || {};
-  const additionalOutputPlans = Array.isArray(value.additionalOutputPlans)
-    ? value.additionalOutputPlans
-    : (value.additionalOutputPlan ? [value.additionalOutputPlan] : []);
   return {
     ...emptyProject,
     ...value,
-    mandatoryOutputPlan: normalizePlanValue(value.mandatoryOutputPlan),
-    additionalOutputPlans: additionalOutputPlans.map(normalizePlanValue).filter(Boolean),
-    additionalOutputPlan: additionalOutputPlans.map(normalizePlanValue).filter(Boolean)[0] || '',
     targetTkt: value.targetTkt ? String(value.targetTkt) : '',
     ripRelation: RIP_ALIASES[value.ripRelation] || value.ripRelation || '',
     researchCenterRelation: RIP_ALIASES[value.researchCenterRelation] || value.researchCenterRelation || '',
@@ -136,52 +103,82 @@ const normalizeProjectState = source => {
   };
 };
 
-const normalizeProjectForSave = project => ({
-  ...project,
-  additionalOutputPlans: project.additionalOutputPlans || [],
-  additionalOutputPlan: (project.additionalOutputPlans || [])[0] || '',
-});
+const outputMatchesOption = (output, optionValue) => output.schemeOutputOptionId === optionValue.id
+  || output.planValue === optionValue.value
+  || output.planValue === optionValue.id
+  || (output.category === optionValue.category
+    && (!optionValue.journalIndexTarget || output.journalIndexTarget === optionValue.journalIndexTarget)
+    && (!optionValue.hkiType || output.hkiType === optionValue.hkiType)
+    && (!optionValue.productType || output.productType === optionValue.productType));
 
-const makeOutputFromPlan = (planValue, type, current = null) => {
-  const plan = planOptionFor(planValue);
-  const defaults = plan ? plan.defaults : {};
-  const title = plan ? plan.label : (current && current.title) || '';
+const makeMandatoryOutput = (outputOption, current = null) => {
+  const {
+    id: optionId, value, name, ...fixedDefinition
+  } = outputOption;
   return {
     ...OUTPUT_EMPTY,
-    ...defaults,
-    ...(current || {}),
+    ...fixedDefinition,
     id: current && current.id ? current.id : uid('output'),
-    type,
-    planValue,
-    planLabel: title,
-    title: current && current.title ? current.title : title,
-    description: current && current.description ? current.description : title,
-    category: (current && current.category) || defaults.category || '',
+    type: 'wajib',
+    schemeOutputOptionId: optionId,
+    planValue: value || optionId,
+    planLabel: name,
+    name,
+    description: current && current.description ? current.description : '',
+    configurationLocked: true,
   };
 };
 
-const syncOutputsWithProject = (nextProject, currentOutputs) => {
-  const current = currentOutputs || [];
-  const mandatoryPlan = nextProject.mandatoryOutputPlan;
-  const additionalPlans = nextProject.additionalOutputPlans || [];
-  const mandatoryOutput = mandatoryPlan ? [makeOutputFromPlan(mandatoryPlan, 'wajib', current.find(item => item.type === 'wajib' && item.planValue === mandatoryPlan) || current.find(item => item.type === 'wajib' && !item.planValue))] : [];
-  const additionalOutputs = additionalPlans.map((planValue, index) => makeOutputFromPlan(planValue, 'tambahan', current.find(item => item.type === 'tambahan' && item.planValue === planValue) || current.find(item => item.type === 'tambahan' && !item.planValue && index === 0)));
-  return [...mandatoryOutput, ...additionalOutputs].map(output => (output.category === 'produk_prototipe' && !output.targetTkt ? { ...output, targetTkt: nextProject.targetTkt || '' } : output));
-};
+const normalizeProposalOutputs = (currentOutputs, schemeOutputOptions) => (currentOutputs || []).map(output => {
+  if (output.type !== 'wajib') return { ...output, type: 'tambahan', customOutput: true };
+  const matchedOption = schemeOutputOptions.find(item => outputMatchesOption(output, item));
+  return matchedOption ? makeMandatoryOutput(matchedOption, output) : { ...output, configurationLocked: true };
+});
 
 const selectedLabel = (options, value) => (options.find(item => item.value === value) || {}).label || 'Pilih opsi';
 
 const validateOutput = output => validateOutputDetails(output);
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
-const getFileExtension = file => String((file && file.name) || '').split('.').pop().toLowerCase();
 const validateAttachmentFile = (file, allowedExtensions) => {
-  if (!file) return 'File wajib dipilih.';
-  const extension = getFileExtension(file);
-  if (allowedExtensions.length && !allowedExtensions.includes(extension)) return `Format file .${extension || '-'} tidak sesuai. Format yang diizinkan: ${allowedExtensions.join(', ')}.`;
-  if (Number(file.size || 0) > MAX_ATTACHMENT_SIZE) return 'Ukuran file maksimal 10 MB.';
-  return '';
+  const result = validateFile(file, { allowedExtensions, maxSize: MAX_ATTACHMENT_SIZE });
+  return result.message;
 };
+
+const attachmentSource = file => file && (file.dataUrl || file.url || file.fileUrl || file.previewUrl || '');
+
+function AdditionalAttachmentUpload({ requirement, file, onFile, onRemove }) {
+  const inputRef = useRef(null);
+  const fileSource = attachmentSource(file);
+  return (
+    <div className="ris-attachment-upload-cell">
+      <input
+        ref={inputRef}
+        className="ris-hidden-file-input"
+        type="file"
+        accept={requirement.accept}
+        onChange={event => {
+          const selectedFile = event.target.files && event.target.files[0];
+          if (selectedFile) onFile(selectedFile);
+          if (inputRef.current) inputRef.current.value = '';
+        }}
+      />
+      {!file && <button type="button" className="ris-compact-upload-button" onClick={() => inputRef.current && inputRef.current.click()}><Icon name="upload" size={16} />Upload Lampiran</button>}
+      {file && <React.Fragment>
+        {fileSource ? <a className="ris-uploaded-attachment-link" href={fileSource} download={file.name}><Icon name="document" size={16} /><span>{file.name}</span></a> : <span className="ris-uploaded-attachment-link is-static"><Icon name="document" size={16} /><span>{file.name}</span></span>}
+        <button type="button" className="ris-attachment-delete-button" onClick={onRemove} title="Hapus lampiran" aria-label={`Hapus ${file.name}`}><Icon name="trash" size={16} />Hapus</button>
+      </React.Fragment>}
+    </div>
+  );
+}
+
+AdditionalAttachmentUpload.propTypes = {
+  requirement: PropTypes.object.isRequired,
+  file: PropTypes.object,
+  onFile: PropTypes.func.isRequired,
+  onRemove: PropTypes.func.isRequired,
+};
+AdditionalAttachmentUpload.defaultProps = { file: null };
 
 function CollapsibleChoice({
   label, value, options, onChange, required, documentUrl, otherValue, onOtherChange
@@ -219,63 +216,6 @@ CollapsibleChoice.defaultProps = {
   value: '', required: false, documentUrl: '', otherValue: '', onOtherChange: null
 };
 
-function MultiChoiceList({
-  label, values, options, onChange, required
-}) {
-  const selected = values || [];
-  const toggle = item => {
-    onChange(selected.includes(item.value) ? selected.filter(value => value !== item.value) : [...selected, item.value]);
-  };
-  return (
-    <Field label={label} required={required} alignStart>
-      <details className="ris-choice-list" open>
-        <summary>{selected.length ? `${selected.length} luaran dipilih` : 'Tidak ada luaran tambahan'}</summary>
-        <div className="ris-choice-grid">
-          {options.map(item => (
-            <label key={item.value} className={selected.includes(item.value) ? 'active' : ''}>
-              <input type="checkbox" checked={selected.includes(item.value)} onChange={() => toggle(item)} />
-              <span><strong>{item.label}</strong></span>
-            </label>
-          ))}
-        </div>
-      </details>
-    </Field>
-  );
-}
-
-MultiChoiceList.propTypes = {
-  label: PropTypes.string.isRequired,
-  values: PropTypes.array,
-  options: PropTypes.array.isRequired,
-  onChange: PropTypes.func.isRequired,
-  required: PropTypes.bool,
-};
-MultiChoiceList.defaultProps = { values: [], required: false };
-
-function OutputFields({ output, onChange }) {
-  const update = (key, value) => onChange({ ...output, [key]: value });
-  return (
-    <div>
-      <Field label="Judul" required><input value={output.title} onChange={event => update('title', event.target.value)} placeholder="Pengembangan..." /></Field>
-      <Field label="Target tahun" required><input type="number" min="2000" max="2100" value={output.targetYear} onChange={event => update('targetYear', event.target.value)} placeholder="2026" /></Field>
-      <Field label="Deskripsi" required alignStart><textarea rows="3" value={output.description} onChange={event => update('description', event.target.value)} placeholder="Lorem ipsum dolor sit amet..." /></Field>
-      <Field label="Kategori" required><select value={output.category} onChange={event => update('category', event.target.value)}><option value="">-- Pilih --</option><option value="jurnal">Jurnal</option><option value="prosiding">Prosiding</option><option value="buku">Buku</option><option value="hki">HKI</option><option value="produk_prototipe">Produk/Prototipe</option><option value="other">Lainnya</option></select></Field>
-      {output.category === 'jurnal' && <React.Fragment>
-        <Field label="Target Level Jurnal" required><select value={output.journalTargetLevel} onChange={event => update('journalTargetLevel', event.target.value)}><option value="">-- Pilih --</option><option value="sinta">SINTA</option><option value="scopus">Scopus</option><option value="wos">Web of Science</option></select></Field>
-        <Field label="Target Indeks Jurnal" required><input value={output.journalIndexTarget} onChange={event => update('journalIndexTarget', event.target.value)} placeholder="Contoh: SINTA 2, Scopus Q1..." /></Field>
-        <Field label="Jenis Publikasi" required><select value={output.publicationType} onChange={event => update('publicationType', event.target.value)}><option value="">-- Pilih --</option><option value="nasional">Nasional</option><option value="internasional">Internasional</option></select></Field>
-        {output.publicationType === 'internasional' && <Field label="Kuartil" required><select value={output.targetQuartile} onChange={event => update('targetQuartile', event.target.value)}><option value="">-- Pilih --</option>{['Q1', 'Q2', 'Q3', 'Q4'].map(item => <option key={item}>{item}</option>)}</select></Field>}
-      </React.Fragment>}
-      {output.category === 'prosiding' && <React.Fragment><Field label="Jenis Prosiding" required><select value={output.proceedingType} onChange={event => update('proceedingType', event.target.value)}><option value="">-- Pilih --</option><option value="nasional">Nasional</option><option value="internasional">Internasional</option></select></Field><Field label="Target Indeks" required><input value={output.indexTarget} onChange={event => update('indexTarget', event.target.value)} placeholder="Contoh: Scopus, IEEE Xplore..." /></Field></React.Fragment>}
-      {output.category === 'buku' && <React.Fragment><Field label="Jenis Buku" required><select value={output.bookType} onChange={event => update('bookType', event.target.value)}><option value="">-- Pilih --</option><option value="full_book">Full Book</option><option value="book_chapter">Book Chapter</option></select></Field><Field label="Target Penerbit" required><input value={output.publisherTarget} onChange={event => update('publisherTarget', event.target.value)} placeholder="Contoh: Gramedia, Springer..." /></Field><Field label="Rencana ISBN"><input value={output.isbnPlan} onChange={event => update('isbnPlan', event.target.value)} placeholder="Opsional" /></Field></React.Fragment>}
-      {output.category === 'hki' && <React.Fragment><Field label="Jenis HKI" required><select value={output.hkiType} onChange={event => update('hkiType', event.target.value)}><option value="">-- Pilih --</option><option value="paten">Paten</option><option value="paten_sederhana">Paten Sederhana</option><option value="hak_cipta">Hak Cipta</option><option value="merek_dagang">Merek Dagang</option><option value="rahasia_dagang">Rahasia Dagang</option><option value="desain_produk_industri">Desain Produk Industri</option><option value="indikasi_geografis">Indikasi Geografis</option><option value="perlindungan_varietas_tanaman">Perlindungan Varietas Tanaman</option><option value="topografi_sirkuit_terpadu">Perlindungan Topografi Sirkuit Terpadu</option></select></Field><Field label="Target Tahun Pendaftaran" required><input type="number" value={output.targetRegistrationYear} onChange={event => update('targetRegistrationYear', event.target.value)} placeholder="2026" /></Field></React.Fragment>}
-      {output.category === 'produk_prototipe' && <React.Fragment><Field label="Jenis Produk" required><input value={output.productType} onChange={event => update('productType', event.target.value)} placeholder="Contoh: Alat kesehatan, Aplikasi..." /></Field><Field label="Target TKT" required><select value={output.targetTkt} onChange={event => update('targetTkt', event.target.value)}><option value="">-- Pilih --</option><option value="none">None</option>{Array.from({ length: 9 }, (_, index) => index + 1).map(item => <option key={item} value={item}>TKT {item}</option>)}</select></Field><Field label="Bentuk Output" required><select value={output.expectedOutputForm} onChange={event => update('expectedOutputForm', event.target.value)}><option value="">-- Pilih --</option><option value="prototype">Prototype</option><option value="model">Model</option><option value="software">Software</option></select></Field></React.Fragment>}
-    </div>
-  );
-}
-
-OutputFields.propTypes = { output: PropTypes.object.isRequired, onChange: PropTypes.func.isRequired };
-
 function MemberFields({ member, lecturers, onChange }) {
   const update = (key, value) => onChange({ ...member, [key]: value });
   const selectProfile = id => {
@@ -303,51 +243,65 @@ function MemberFields({ member, lecturers, onChange }) {
 
 MemberFields.propTypes = { member: PropTypes.object.isRequired, lecturers: PropTypes.array.isRequired, onChange: PropTypes.func.isRequired };
 
-export default function ProposalWizardPage() {
-  const { schemeId } = useParams();
-  const { data, setData, user } = useRis();
+export default function ProposalWizardPage({ archiveMode }) {
+  const params = useParams();
+  const {
+    data, setData, showToast, user
+  } = useRis();
   const history = useHistory();
+  const archivedDraft = archiveMode ? (data.drafts || []).find(item => item.id === params.draftId) : null;
+  const schemeId = archiveMode && archivedDraft ? archivedDraft.schemeId : params.schemeId;
   const scheme = data.schemes.find(item => item.id === schemeId);
-  const existing = (data.drafts || []).find(item => item.schemeId === schemeId && item.userId === user.id);
+  const existing = archiveMode ? archivedDraft : (data.drafts || []).find(item => item.schemeId === schemeId && item.userId === user.id);
   const defaultLeaderProfile = data.lecturers.find(item => item.id === user.profileId);
   const defaultLeader = defaultLeaderProfile ? {
     ...emptyMember(), role: 'ketua', type: 'internal_lecturer', profileId: defaultLeaderProfile.id, name: defaultLeaderProfile.name, nidn: defaultLeaderProfile.nidn, program: defaultLeaderProfile.program, faculty: defaultLeaderProfile.faculty, orcid: defaultLeaderProfile.orcid
   } : { ...emptyMember(), role: 'ketua' };
   const initialProject = normalizeProjectState(existing ? existing.project : emptyProject);
+  const schemeOutputOptions = useMemo(() => normalizeSchemeOutputOptions(scheme), [scheme]);
   const [step, setStep] = useState(existing ? Math.min(existing.currentStep || 1, 5) : 1);
   const [project, setProject] = useState(initialProject);
   const [members, setMembers] = useState(existing && existing.members.length ? existing.members : [defaultLeader, emptyMember()]);
   const [budgets, setBudgets] = useState(existing && existing.budgets.length ? existing.budgets : [emptyBudget('materials')]);
   const [activeBudgetTab, setActiveBudgetTab] = useState('materials');
-  const [outputs, setOutputs] = useState(existing && existing.outputs.length ? syncOutputsWithProject(initialProject, existing.outputs) : syncOutputsWithProject(initialProject, []));
+  const [outputs, setOutputs] = useState(() => normalizeProposalOutputs(existing ? existing.outputs : [], schemeOutputOptions));
   const [files, setFiles] = useState(existing ? existing.files : []);
-  const [additionalFiles, setAdditionalFiles] = useState([]);
   const [error, setError] = useState('');
+  const [savedAt, setSavedAt] = useState('');
   const [revisionOpen, setRevisionOpen] = useState(false);
   const autosaveTimer = useRef(null);
 
   const budgetTotal = useMemo(() => budgets.reduce((sum, item) => sum + (Number(item.volume) || 0) * (Number(item.unitPrice) || 0), 0), [budgets]);
+  const activeBudgetTotal = useMemo(() => budgets.filter(item => item.tab === activeBudgetTab).reduce((sum, item) => sum + (Number(item.volume) || 0) * (Number(item.unitPrice) || 0), 0), [budgets, activeBudgetTab]);
   const leader = members[0];
   const regularMembers = members.slice(1);
   const schemeTitle = getSchemeTitle(scheme);
+  const maximumBudget = getSchemeMaximumBudget(scheme);
+  const budgetExceeded = maximumBudget > 0 && budgetTotal > maximumBudget;
+  const attachmentRequirements = useMemo(() => getProposalAttachmentRequirements(scheme, members), [scheme, members]);
+  const primaryAttachmentRequirements = attachmentRequirements.filter(isBaseAttachmentRequirement);
+  const additionalAttachmentRequirements = attachmentRequirements.filter(item => !isBaseAttachmentRequirement(item));
+  const mandatoryOutputs = outputs.filter(item => item.type === 'wajib');
+  const additionalOutputs = outputs.filter(item => item.type === 'tambahan');
+  const selectedMandatoryOptionIds = mandatoryOutputs.filter(item => item.schemeOutputOptionId).map(item => item.schemeOutputOptionId);
 
   const buildDraft = (status, currentExisting = existing) => {
     const now = new Date().toISOString();
-    const savedProject = normalizeProjectForSave(project);
     const nextDraft = {
+      ...(currentExisting || {}),
       id: currentExisting ? currentExisting.id : uid('draft'),
-      userId: user.id,
-      userName: user.name,
+      userId: currentExisting ? currentExisting.userId : user.id,
+      userName: currentExisting ? currentExisting.userName : user.name,
       createdBy: currentExisting ? currentExisting.createdBy : user.id,
       schemeId,
       status,
       draftStatus: status,
       currentStep: step,
-      project: savedProject,
+      project,
       members,
       budgets,
       outputs,
-      files: [...files, ...additionalFiles].filter(item => item && item.name),
+      files: files.filter(item => item && item.name),
       createdAt: currentExisting ? currentExisting.createdAt : now,
       updatedAt: now,
       lastSavedAt: now,
@@ -357,30 +311,45 @@ export default function ProposalWizardPage() {
       review: currentExisting && currentExisting.review,
       contract: currentExisting && currentExisting.contract,
     };
-    return { ...nextDraft, db: toDbDraftSnapshot(nextDraft, scheme) };
+    return nextDraft;
   };
 
   const persist = (status, redirect) => {
     setData(current => {
-      const currentExisting = (current.drafts || []).find(item => (existing && item.id === existing.id) || (item.schemeId === schemeId && item.userId === user.id && canEditDraft(item, user)));
-      const nextDraft = buildDraft(status, currentExisting);
+      const currentExisting = (current.drafts || []).find(item => (existing && item.id === existing.id) || (!archiveMode && item.schemeId === schemeId && item.userId === user.id && canEditDraft(item, user)));
+      const builtDraft = buildDraft(status, currentExisting);
+      const nextDraft = currentExisting ? (transitionDraftStatus(currentExisting, status, builtDraft) || currentExisting) : builtDraft;
       return {
         ...current,
         drafts: currentExisting ? (current.drafts || []).map(item => (item.id === currentExisting.id ? nextDraft : item)) : [...(current.drafts || []), nextDraft],
+        systemActivityLogs: archiveMode ? [...(current.systemActivityLogs || []), createActivityLog(user, 'archive_edit_internal_research', 'research_draft', nextDraft.id, currentExisting, nextDraft, uid)] : current.systemActivityLogs,
       };
     });
     if (redirect) history.push(redirect);
   };
 
+  const saveDraft = () => {
+    persist(existing ? existing.status : STATUS.DRAFT);
+    setSavedAt(new Date().toISOString());
+    showToast({
+      tone: 'success',
+      title: existing && existing.status === STATUS.REVISION ? 'Revisi tersimpan' : 'Draft tersimpan',
+      message: 'Perubahan proposal berhasil disimpan.',
+    });
+  };
+
   useEffect(() => {
     if (!scheme || !user) return undefined;
-    if (existing && !canEditDraft(existing, user)) return undefined;
-    if (!existing && (!isOpenScheme(scheme) || !isEligibleForScheme(scheme, user) || hasActiveDraftForScheme(data, user, schemeId))) return undefined;
+    if (archiveMode) return undefined;
+    if (existing && !archiveMode && !canEditDraft(existing, user)) return undefined;
+    if (!archiveMode && !existing && (!isOpenScheme(scheme) || !isEligibleForScheme(scheme, user) || hasActiveDraftForScheme(data, user, schemeId))) return undefined;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => {
       setData(current => {
-        const currentExisting = (current.drafts || []).find(item => (existing && item.id === existing.id) || (item.schemeId === schemeId && item.userId === user.id && canEditDraft(item, user)));
-        const nextDraft = buildDraft(currentExisting ? currentExisting.status : STATUS.DRAFT, currentExisting);
+        const currentExisting = (current.drafts || []).find(item => (existing && item.id === existing.id) || (!archiveMode && item.schemeId === schemeId && item.userId === user.id && canEditDraft(item, user)));
+        const status = currentExisting ? currentExisting.status : STATUS.DRAFT;
+        const builtDraft = buildDraft(status, currentExisting);
+        const nextDraft = currentExisting ? (transitionDraftStatus(currentExisting, status, builtDraft) || currentExisting) : builtDraft;
         return {
           ...current,
           drafts: currentExisting ? (current.drafts || []).map(item => (item.id === currentExisting.id ? nextDraft : item)) : [...(current.drafts || []), nextDraft],
@@ -390,24 +359,26 @@ export default function ProposalWizardPage() {
     return () => {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
-  }, [step, project, members, budgets, outputs, files, additionalFiles, schemeId, user && user.id]);
+  }, [step, project, members, budgets, outputs, files, archiveMode, schemeId, user && user.id]);
 
   if (!scheme) return <div className="ris-page"><h1>Skema tidak ditemukan</h1></div>;
-  if (!isOpenScheme(scheme) && !existing) return <div className="ris-page"><h1>Skema tidak sedang dibuka</h1></div>;
-  if (!existing && !isEligibleForScheme(scheme, user)) return <div className="ris-page"><h1>Akun tidak eligible untuk skema ini</h1><p className="ris-muted">Data mengikuti tabel scheme_eligibility_snapshot/eligible user pada skema.</p></div>;
-  if (existing && !canEditDraft(existing, user)) return <div className="ris-page"><h1>Proposal tidak dapat diedit</h1><p className="ris-muted">Hanya draft atau proposal revisi milik dosen yang dapat diedit.</p></div>;
-  if (!existing && hasActiveDraftForScheme(data, user, schemeId)) return <div className="ris-page"><h1>Pengajuan aktif sudah ada</h1><p className="ris-muted">Satu dosen hanya boleh memiliki satu draft/pengajuan aktif per skema.</p></div>;
+  if (!archiveMode && !isOpenScheme(scheme) && !existing) return <div className="ris-page"><h1>Skema tidak sedang dibuka</h1></div>;
+  if (!archiveMode && !existing && !isEligibleForScheme(scheme, user)) return <div className="ris-page"><h1>Akun tidak eligible untuk skema ini</h1><p className="ris-muted">Akun ini tidak termasuk daftar pengguna yang memenuhi kriteria skema.</p></div>;
+  if (!archiveMode && existing && !canEditDraft(existing, user)) return <div className="ris-page"><h1>Proposal tidak dapat diedit</h1><p className="ris-muted">Hanya draft atau proposal revisi milik dosen yang dapat diedit.</p></div>;
+  if (!archiveMode && !existing && hasActiveDraftForScheme(data, user, schemeId)) return <div className="ris-page"><h1>Pengajuan aktif sudah ada</h1><p className="ris-muted">Satu dosen hanya boleh memiliki satu draft/pengajuan aktif per skema.</p></div>;
 
   const validateStep = () => {
-    if (step === 1 && (!project.title || !project.mandatoryOutputPlan || !project.targetTkt || !project.ripRelation || !project.researchCenterRelation || (project.researchCenterRelation === 'other' && !project.researchCenterOther) || !(project.sdgs || []).length || project.integrated === null || (project.integrated && (!project.courseName || !project.academicYear)))) return 'Lengkapi seluruh data proyek yang wajib diisi.';
+    if (step === 1 && (!project.title || !project.targetTkt || !project.ripRelation || !project.researchCenterRelation || (project.researchCenterRelation === 'other' && !project.researchCenterOther) || !(project.sdgs || []).length || project.integrated === null || (project.integrated && (!project.courseName || !project.academicYear)))) return 'Lengkapi seluruh data proyek yang wajib diisi.';
     if (step === 2 && (members.length < 2 || members.some(item => !item.name || (!item.nidn && !item.nim) || !item.program || !item.faculty))) return 'Lengkapi data ketua dan minimal satu anggota.';
     if (step === 3 && (!budgets.length || budgets.some(item => !item.component || !item.name || Number(item.volume) <= 0 || !item.unit || Number(item.unitPrice) <= 0))) return 'Lengkapi minimal satu item anggaran.';
-    if (step === 4 && (!outputs.length || outputs.some(item => !validateOutput(item)))) return 'Lengkapi data luaran wajib dan tambahan.';
+    if (step === 3 && budgetExceeded) return `Total anggaran melebihi maksimum skema sebesar ${formatCurrency(maximumBudget)}.`;
+    if (step === 4 && (!outputs.some(item => item.type === 'wajib') || outputs.some(item => !validateOutput(item)))) return 'Pilih minimal satu luaran wajib dan lengkapi seluruh data luaran.';
+    if (step === 5 && attachmentRequirements.filter(item => item.required !== false).some(item => !fileFor(item.category))) return 'Unggah seluruh lampiran yang ditetapkan pada skema.';
     return '';
   };
 
   const next = () => {
-    const message = validateStep();
+    const message = archiveMode ? '' : validateStep();
     if (message) { setError(message); return; }
     setError('');
     const nextStep = Math.min(5, step + 1);
@@ -422,63 +393,116 @@ export default function ProposalWizardPage() {
     persist(STATUS.SUBMITTED, '/ris');
   };
 
-  const setFixedFile = (category, file) => {
-    const allowed = category === 'rab' ? ['xls', 'xlsx'] : ['pdf'];
+  const setFixedFile = (requirement, file) => {
+    const allowed = String(requirement.accept || '').split(',').map(item => item.trim().replace(/^\./, '')).filter(Boolean);
     const validation = validateAttachmentFile(file, allowed);
     if (validation) {
       setError(validation);
       return;
     }
-    const meta = { ...fileMeta(file), category, uploadedAt: new Date().toISOString() };
-    setFiles(current => [...current.filter(item => item.category !== category), meta]);
+    const currentFile = files.find(item => item.category === requirement.category);
+    if (currentFile && currentFile.fileUrl && currentFile.fileUrl.indexOf('blob:') === 0 && window.URL && window.URL.revokeObjectURL) window.URL.revokeObjectURL(currentFile.fileUrl);
+    const fileUrl = window.URL && window.URL.createObjectURL ? window.URL.createObjectURL(file) : '';
+    const meta = { ...fileMeta(file), category: requirement.category, requirementName: requirement.name, uploadedAt: new Date().toISOString(), fileUrl };
+    setFiles(current => [...current.filter(item => item.category !== requirement.category), meta]);
     setError('');
   };
 
   const fileFor = category => files.find(item => item.category === category) || null;
+  const removeFixedFile = category => {
+    const currentFile = fileFor(category);
+    if (currentFile && currentFile.fileUrl && currentFile.fileUrl.indexOf('blob:') === 0 && window.URL && window.URL.revokeObjectURL) window.URL.revokeObjectURL(currentFile.fileUrl);
+    setFiles(current => current.filter(item => item.category !== category));
+    setError('');
+  };
   const projectUpdate = (key, value) => {
     const nextProject = { ...project, [key]: value };
-    if (key === 'additionalOutputPlans') nextProject.additionalOutputPlan = (value || [])[0] || '';
     setProject(nextProject);
-    if (key === 'mandatoryOutputPlan' || key === 'additionalOutputPlans') {
-      setOutputs(current => syncOutputsWithProject(nextProject, current));
-    }
     if (key === 'targetTkt') {
-      setOutputs(current => current.map(output => (output.category === 'produk_prototipe' && (!output.targetTkt || output.targetTkt === project.targetTkt) ? { ...output, targetTkt: value } : output)));
+      setOutputs(current => current.map(output => (output.type === 'tambahan' && output.category === 'produk_prototipe' && (!output.targetTkt || output.targetTkt === project.targetTkt) ? { ...output, targetTkt: value } : output)));
     }
+  };
+  const toggleMandatoryOutput = outputOption => {
+    setOutputs(current => {
+      const selected = current.some(item => item.type === 'wajib' && item.schemeOutputOptionId === outputOption.id);
+      if (selected) return current.filter(item => !(item.type === 'wajib' && item.schemeOutputOptionId === outputOption.id));
+      return [...current, makeMandatoryOutput(outputOption)];
+    });
   };
 
   return (
     <div className="ris-page">
-      <PageBack onClick={() => history.push('/ris/pengajuan-penelitian-internal')} />
-      <div className="ris-title-with-action"><h1>Form Pendaftaran Proposal</h1>{existing && existing.status === STATUS.REVISION && existing.decision && <Button type="button" tone="amber" pill onClick={() => setRevisionOpen(true)}>Tampilkan Catatan Revisi</Button>}</div>
-      <div className="ris-stepper">{['Data Proyek', 'Data Member', 'Data Anggaran', 'Data Hasil', 'Data Lampiran'].map((label, index) => <div key={label} className={step === index + 1 ? 'active' : step > index + 1 ? 'done' : ''}><span>{index + 1}</span><small>{label}</small></div>)}</div>
+      <PageBack onClick={() => history.push(archiveMode ? '/ris/arsip' : '/ris/pengajuan-penelitian-internal')} />
+      <div className="ris-title-with-action"><h1>{archiveMode ? 'Penyunting Arsip Penelitian Internal' : 'Formulir Pendaftaran Proposal'}</h1>{existing && existing.status === STATUS.REVISION && existing.decision && <Button type="button" tone="amber" pill onClick={() => setRevisionOpen(true)}>Tampilkan Catatan Revisi</Button>}</div>
+      <div className="ris-stepper">{['Deskripsi Penelitian', 'Anggota', 'Anggaran', 'Luaran Hasil', 'Lampiran'].map((label, index) => <div key={label} className={step === index + 1 ? 'active' : step > index + 1 ? 'done' : ''}><span>{index + 1}</span><small>{label}</small></div>)}</div>
       {error && <div className="ris-alert ris-alert-error">{error}</div>}
 
-      {step === 1 && <section className="ris-form-section"><h2>Data Proyek</h2>
+      {step === 1 && <section className="ris-form-section"><h2>Deskripsi Penelitian</h2>
         <Field label="Skema Penelitian"><span className="ris-static-value">{schemeTitle}</span></Field>
         <Field label="Judul Penelitian" required><input value={project.title} onChange={event => projectUpdate('title', event.target.value)} placeholder="Pengembangan..." /></Field>
-        <CollapsibleChoice label="Rencana Luaran Wajib Penelitian (status minimal accepted)" required value={project.mandatoryOutputPlan} options={MANDATORY_OUTPUT_OPTIONS} onChange={value => projectUpdate('mandatoryOutputPlan', value)} />
-        <MultiChoiceList label="Rencana Luaran Tambahan (tidak wajib)" values={project.additionalOutputPlans || []} options={ADDITIONAL_OUTPUT_OPTIONS} onChange={value => projectUpdate('additionalOutputPlans', value)} />
         <CollapsibleChoice label="Target TKT (Tingkat Kesiapterapan Teknologi)" required value={project.targetTkt} options={TKT_OPTIONS} documentUrl="https://bit.ly/pengukuranTKTUMN" onChange={value => projectUpdate('targetTkt', value)} />
         <CollapsibleChoice label="Keterkaitan dengan RIP" required value={project.ripRelation} options={RIP_OPTIONS} documentUrl="https://bit.ly/riprenstrarisetUMN" onChange={value => projectUpdate('ripRelation', value)} />
-        <CollapsibleChoice label="Keterkaitan dengan Research Center" required value={project.researchCenterRelation} options={RESEARCH_CENTER_OPTIONS} otherValue={project.researchCenterOther} onOtherChange={value => projectUpdate('researchCenterOther', value)} onChange={value => projectUpdate('researchCenterRelation', value)} />
+        <CollapsibleChoice label="Keterkaitan dengan Pusat Riset" required value={project.researchCenterRelation} options={RESEARCH_CENTER_OPTIONS} otherValue={project.researchCenterOther} onOtherChange={value => projectUpdate('researchCenterOther', value)} onChange={value => projectUpdate('researchCenterRelation', value)} />
         <Field label="Keterkaitan dengan SDGs" required alignStart><div className="ris-sdg-grid">{SDGS.map(item => <label key={item.id}><input type="checkbox" checked={project.sdgs.includes(item.id)} onChange={() => projectUpdate('sdgs', project.sdgs.includes(item.id) ? project.sdgs.filter(id => id !== item.id) : [...project.sdgs, item.id])} /><span>{item.code}</span>{item.name}</label>)}</div></Field>
         <Field label="Apakah penelitian terintegrasi dengan mata kuliah?" required><div className="ris-radio-group"><label><input type="radio" checked={project.integrated === true} onChange={() => projectUpdate('integrated', true)} />Ya</label><label><input type="radio" checked={project.integrated === false} onChange={() => projectUpdate('integrated', false)} />Tidak</label></div></Field>
-        {project.integrated && <React.Fragment><Field label="Nama Mata Kuliah" required><select value={project.courseName} onChange={event => projectUpdate('courseName', event.target.value)}><option value="">-- Pilih --</option><option value="machine_learning">Machine Learning</option><option value="deep_learning">Deep Learning</option><option value="data_mining">Data Mining</option></select></Field><Field label="Tahun Akademik" required><input value={project.academicYear} onChange={event => projectUpdate('academicYear', event.target.value)} placeholder="2025/2026" /></Field></React.Fragment>}
+        {project.integrated && <React.Fragment><Field label="Nama Mata Kuliah" required><select value={project.courseName} onChange={event => projectUpdate('courseName', event.target.value)}><option value="">-- Pilih --</option><option value="machine_learning">Pembelajaran Mesin</option><option value="deep_learning">Pembelajaran Mendalam</option><option value="data_mining">Penambangan Data</option></select></Field><Field label="Tahun Akademik" required><AcademicYearSelect value={project.academicYear} onChange={event => projectUpdate('academicYear', event.target.value)} /></Field></React.Fragment>}
       </section>}
 
-      {step === 2 && <section className="ris-form-section"><h2>Data Member</h2><div className="ris-form-card"><h3>Ketua</h3><MemberFields member={leader} lecturers={data.lecturers} onChange={value => setMembers([value, ...regularMembers])} /></div>{regularMembers.map((member, index) => <div className="ris-form-card" key={member.id}><div className="ris-card-heading"><h3>{regularMembers.length > 1 ? `Member ${index + 1}` : 'Member'}</h3>{regularMembers.length > 1 && <button type="button" className="ris-text-danger" onClick={() => setMembers([leader, ...regularMembers.filter(item => item.id !== member.id)])}>Hapus Member</button>}</div><MemberFields member={member} lecturers={data.lecturers} onChange={value => setMembers([leader, ...regularMembers.map(item => (item.id === member.id ? value : item))])} /></div>)}<div className="ris-align-right"><Button type="button" tone="gray" pill onClick={() => setMembers(current => [...current, emptyMember()])}>Tambah Member +</Button></div></section>}
+      {step === 2 && <section className="ris-form-section"><h2>Anggota</h2><div className="ris-form-card"><h3>Ketua</h3><MemberFields member={leader} lecturers={data.lecturers} onChange={value => setMembers([value, ...regularMembers])} /></div>{regularMembers.map((member, index) => <div className="ris-form-card" key={member.id}><div className="ris-card-heading"><h3>{regularMembers.length > 1 ? `Anggota ${index + 1}` : 'Anggota'}</h3>{regularMembers.length > 1 && <button type="button" className="ris-text-danger" onClick={() => setMembers([leader, ...regularMembers.filter(item => item.id !== member.id)])}>Hapus Anggota</button>}</div><MemberFields member={member} lecturers={data.lecturers} onChange={value => setMembers([leader, ...regularMembers.map(item => (item.id === member.id ? value : item))])} /></div>)}<div className="ris-align-right"><Button type="button" tone="gray" pill onClick={() => setMembers(current => [...current, emptyMember()])}>Tambah Anggota +</Button></div></section>}
 
-      {step === 3 && <section className="ris-form-section"><h2>Data Anggaran</h2><div className="ris-tabs">{BUDGET_TABS.map(tab => <button type="button" key={tab.key} className={activeBudgetTab === tab.key ? 'active' : ''} onClick={() => setActiveBudgetTab(tab.key)}>{tab.label === 'Pelaporan Hasil Penelitian dan Luaran Wajib' ? 'Pelaporan Hasil' : tab.label}</button>)}</div>{budgets.filter(item => item.tab === activeBudgetTab).map((item, index) => { const tab = BUDGET_TABS.find(entry => entry.key === activeBudgetTab); const updateBudget = (key, value) => setBudgets(current => current.map(entry => (entry.id === item.id ? { ...entry, [key]: value } : entry))); return <div className="ris-form-card" key={item.id}><div className="ris-card-heading"><h3>Item {index + 1}</h3><button type="button" className="ris-text-danger" onClick={() => setBudgets(current => current.filter(entry => entry.id !== item.id))}>Hapus Item</button></div><Field label="Komponen" required><select value={item.component} onChange={event => updateBudget('component', event.target.value)}><option value="">-- Pilih Komponen --</option>{tab.components.map(component => <option key={component}>{component}</option>)}</select></Field><Field label="Nama item" required><input value={item.name} onChange={event => updateBudget('name', event.target.value)} /></Field><Field label="Jumlah" required><input type="number" min="0.01" step="0.01" value={item.volume} onChange={event => updateBudget('volume', event.target.value)} /></Field><Field label="Satuan" required><input value={item.unit} onChange={event => updateBudget('unit', event.target.value)} /></Field><Field label="Harga Satuan" required><input type="number" min="1" value={item.unitPrice} onChange={event => updateBudget('unitPrice', event.target.value)} /></Field><Field label="Total"><input disabled value={formatCurrency((Number(item.volume) || 0) * (Number(item.unitPrice) || 0))} /></Field><Field label="Deskripsi (opsional)"><input value={item.notes} onChange={event => updateBudget('notes', event.target.value)} /></Field></div>; })}<div className="ris-budget-footer"><Button type="button" tone="gray" pill onClick={() => setBudgets(current => [...current, emptyBudget(activeBudgetTab)])}>Tambah Item +</Button><strong>Total Anggaran: {formatCurrency(budgetTotal)}</strong></div></section>}
+      {step === 3 && <section className="ris-form-section">
+        <div className="ris-section-title"><h2>Anggaran</h2></div>
+        <div className="ris-tabs">{BUDGET_TABS.map(tab => <button type="button" key={tab.key} className={activeBudgetTab === tab.key ? 'active' : ''} onClick={() => setActiveBudgetTab(tab.key)}>{tab.label === 'Pelaporan Hasil Penelitian dan Luaran Wajib' ? 'Pelaporan Hasil' : tab.label}</button>)}</div>
+        {budgets.filter(item => item.tab === activeBudgetTab).map((item, index) => {
+          const tab = BUDGET_TABS.find(entry => entry.key === activeBudgetTab);
+          const updateBudget = (key, value) => setBudgets(current => current.map(entry => (entry.id === item.id ? { ...entry, [key]: value } : entry)));
+          return <div className="ris-form-card" key={item.id}><div className="ris-card-heading"><h3>Item {index + 1}</h3><button type="button" className="ris-text-danger" onClick={() => setBudgets(current => current.filter(entry => entry.id !== item.id))}>Hapus Item</button></div><Field label="Komponen" required><select value={item.component} onChange={event => updateBudget('component', event.target.value)}><option value="">-- Pilih Komponen --</option>{tab.components.map(component => <option key={component}>{component}</option>)}</select></Field><Field label="Nama Item" required><input value={item.name} onChange={event => updateBudget('name', event.target.value)} /></Field><Field label="Jumlah" required><input type="number" min="0.01" step="0.01" inputMode="decimal" value={item.volume} onChange={event => updateBudget('volume', event.target.value)} /></Field><Field label="Satuan" required><select value={item.unit} onChange={event => updateBudget('unit', event.target.value)}><option value="">Pilih satuan</option>{['orang', 'kegiatan', 'paket', 'unit', 'bulan', 'hari', 'jam', 'dokumen', 'perjalanan'].map(unit => <option value={unit} key={unit}>{unit.charAt(0).toUpperCase() + unit.slice(1)}</option>)}</select></Field><Field label="Harga Satuan" required><input type="number" min="1" step="1000" inputMode="numeric" value={item.unitPrice} onChange={event => updateBudget('unitPrice', event.target.value)} /></Field><Field label="Total"><input disabled value={formatCurrency((Number(item.volume) || 0) * (Number(item.unitPrice) || 0))} /></Field><Field label="Deskripsi (opsional)"><input value={item.notes} onChange={event => updateBudget('notes', event.target.value)} /></Field></div>;
+        })}
+        <div className="ris-budget-footer"><Button type="button" tone="gray" pill onClick={() => setBudgets(current => [...current, emptyBudget(activeBudgetTab)])}><Icon name="plus" size={16} />Tambah Item</Button><strong>Total {BUDGET_TABS.find(tab => tab.key === activeBudgetTab).label}: {formatCurrency(activeBudgetTotal)}</strong></div>
+        <div className="ris-budget-proposal-summary"><div><span>Total Anggaran Proposal</span><strong className={budgetExceeded ? 'ris-text-danger' : ''}>{formatCurrency(budgetTotal)}</strong></div>{maximumBudget > 0 && <div><span>Maksimum Anggaran Skema</span><strong>{formatCurrency(maximumBudget)}</strong></div>}</div>
+        {maximumBudget > 0 && <div className="ris-budget-meter" aria-label={`Anggaran terpakai ${Math.min(100, Math.round((budgetTotal / maximumBudget) * 100))} persen`}><span className={budgetExceeded ? 'exceeded' : ''} style={{ width: `${Math.min(100, (budgetTotal / maximumBudget) * 100)}%` }} /></div>}
+        {budgetExceeded && <div className="ris-alert ris-alert-error">Kurangi anggaran sebesar {formatCurrency(budgetTotal - maximumBudget)} agar sesuai batas skema.</div>}
+      </section>}
 
-      {step === 4 && <section className="ris-form-section"><h2>Data Hasil</h2>{outputs.length === 0 && <div className="ris-empty-state">Pilih rencana luaran wajib di Data Proyek agar form Data Hasil dibuat otomatis.</div>}{outputs.map(output => <div className="ris-form-card" key={output.id}><div className="ris-card-heading"><h3>{output.type === 'wajib' ? 'Luaran Wajib' : 'Luaran Tambahan'}{output.planLabel ? ` - ${output.planLabel}` : ''}</h3></div><OutputFields output={output} onChange={value => setOutputs(current => current.map(item => (item.id === output.id ? value : item)))} /></div>)}</section>}
+      {step === 4 && <section className="ris-form-section">
+        <div className="ris-section-title ris-wizard-section-heading"><div><h2>Luaran Hasil</h2><p>Pilih minimal satu luaran wajib yang telah ditetapkan pada skema. Anda dapat memilih beberapa opsi.</p></div></div>
+        <div className="ris-mandatory-output-picker">
+          <h3>Pilihan Luaran Wajib</h3>
+          <div className="ris-mandatory-output-list">{schemeOutputOptions.map(item => <label key={item.id} className={selectedMandatoryOptionIds.includes(item.id) ? 'active' : ''}><input type="checkbox" checked={selectedMandatoryOptionIds.includes(item.id)} onChange={() => toggleMandatoryOutput(item)} /><span>{outputDefinitionLabel(item)}</span></label>)}</div>
+        </div>
+        {!mandatoryOutputs.length && <div className="ris-output-selection-note">Belum ada luaran wajib yang dipilih.</div>}
+        {mandatoryOutputs.map(output => <div className="ris-form-card ris-proposal-output-card" key={output.id}><div className="ris-card-heading"><h3>Luaran Wajib - {outputDefinitionLabel(output)}</h3></div><OutputDefinitionFields definition={output} locked onChange={value => setOutputs(current => current.map(item => (item.id === output.id ? value : item)))} /></div>)}
+        {additionalOutputs.map(output => <div className="ris-form-card ris-proposal-output-card" key={output.id}><div className="ris-card-heading"><h3>Luaran Tambahan - {outputDefinitionLabel(output)}</h3><button type="button" className="ris-text-danger" onClick={() => setOutputs(current => current.filter(item => item.id !== output.id))}>Hapus Luaran</button></div><OutputDefinitionFields definition={output} onChange={value => setOutputs(current => current.map(item => (item.id === output.id ? value : item)))} /></div>)}
+        <div className="ris-additional-output-action"><Button type="button" tone="blue" onClick={() => setOutputs(current => [...current, emptyCustomOutput()])}><Icon name="plus" size={16} />Tambah Luaran Tambahan</Button></div>
+      </section>}
 
-      {step === 5 && <section className="ris-form-section"><h2>Data Lampiran</h2><div className="ris-form-card"><h3>Lampiran Wajib 1</h3><Field label="Kategori"><select disabled><option>Proposal</option></select></Field><FileDrop file={fileFor('proposal')} accept=".pdf" label="PDF (.pdf, maksimal 10 MB)" onFile={file => setFixedFile('proposal', file)} /></div><div className="ris-form-card"><h3>Lampiran Wajib 2</h3><Field label="Kategori"><select disabled><option>RAB</option></select></Field><FileDrop file={fileFor('rab')} accept=".xls,.xlsx" label="Excel (.xls/.xlsx, maksimal 10 MB)" onFile={file => setFixedFile('rab', file)} /></div>{schemeTitle.toLowerCase().includes('kerjasama') && <div className="ris-form-card"><h3>Lampiran Kondisional</h3><Field label="Kategori"><select disabled><option>MoA</option></select></Field><FileDrop file={fileFor('moa')} accept=".pdf" label="PDF (.pdf, maksimal 10 MB)" onFile={file => setFixedFile('moa', file)} /></div>}{members.some(item => item.type === 'student') && <div className="ris-form-card"><h3>Lampiran Kondisional</h3><Field label="Kategori"><select disabled><option>Surat Keterangan Mahasiswa</option></select></Field><FileDrop file={fileFor('student_letter')} accept=".pdf" label="PDF (.pdf, maksimal 10 MB)" onFile={file => setFixedFile('student_letter', file)} /></div>}{additionalFiles.map(item => <div className="ris-form-card" key={item.id}><div className="ris-card-heading"><h3>Lampiran Tambahan</h3><button type="button" className="ris-text-danger" onClick={() => setAdditionalFiles(current => current.filter(entry => entry.id !== item.id))}>Hapus</button></div><Field label="Kategori" required><select value={item.category} onChange={event => setAdditionalFiles(current => current.map(entry => (entry.id === item.id ? { ...entry, category: event.target.value } : entry)))}><option value="">-- Pilih --</option><option value="supporting_document">Supporting Document</option><option value="budget_temp_bon_file">Budget Temp Bon File</option><option value="budget_reimburse_file">Budget Reimburse File</option><option value="budget_receipt_file">Budget Receipt File</option><option value="budget_accountability_file">Budget Accountability File</option></select></Field><FileDrop file={item.name ? item : null} label="Pilih file (maksimal 10 MB)" onFile={file => { const validation = validateAttachmentFile(file, ['pdf', 'doc', 'docx', 'xls', 'xlsx']); if (validation) { setError(validation); return; } const meta = { ...fileMeta(file), uploadedAt: new Date().toISOString() }; setAdditionalFiles(current => current.map(entry => (entry.id === item.id ? { ...entry, ...meta, id: item.id } : entry))); setError(''); }} /></div>)}<div className="ris-align-right"><Button type="button" tone="gray" pill onClick={() => setAdditionalFiles(current => [...current, {
-        id: uid('attachment'), category: '', name: '', size: 0
-      }])}>Tambah Data Lampiran Tambahan +</Button></div></section>}
+      {step === 5 && <section className="ris-form-section">
+        <div className="ris-section-title ris-wizard-section-heading"><div><h2>Lampiran</h2><p>Unduh template yang disediakan, lengkapi dokumen, lalu unggah kembali sesuai formatnya.</p></div></div>
+        {primaryAttachmentRequirements.map((requirement, index) => <div className="ris-form-card ris-proposal-attachment-card" key={requirement.id}><div className="ris-card-heading"><h3>{index + 1}. {requirement.name}</h3><span className="ris-badge blue">Wajib</span></div>{requirement.template && attachmentSource(requirement.template) ? <a className="ris-template-download" href={attachmentSource(requirement.template)} download={requirement.template.name}><Icon name="download" size={17} /><span><strong>Unduh Template</strong><small>{requirement.template.name}</small></span></a> : <div className="ris-template-unavailable">Template tidak disediakan untuk lampiran ini.</div>}<FileDrop file={fileFor(requirement.category)} accept={requirement.accept} maxSize={MAX_ATTACHMENT_SIZE} onError={setError} label={`Unggah ${requirement.name} (maksimal 10 MB)`} onFile={file => setFixedFile(requirement, file)} /></div>)}
+        {additionalAttachmentRequirements.length > 0 && <div className="ris-additional-attachment-section">
+          <div className="ris-additional-attachment-heading"><h3>Lampiran Tambahan</h3><p>Lampiran berikut ditetapkan oleh pengelola skema penelitian.</p></div>
+          <div className="ris-table-wrap ris-additional-attachment-table-wrap">
+            <table className="ris-table ris-table-left ris-additional-attachment-table">
+              <thead><tr><th>No.</th><th>Nama Lampiran</th><th>Templat Lampiran</th><th>Unggah Lampiran</th></tr></thead>
+              <tbody>{additionalAttachmentRequirements.map((requirement, index) => {
+                const templateSource = attachmentSource(requirement.template);
+                return <tr key={requirement.id}>
+                  <td className="ris-attachment-number" data-label="No.">{index + 1}</td>
+                  <td data-label="Nama Lampiran"><strong className="ris-attachment-requirement-name">{requirement.name}</strong></td>
+                  <td data-label="Templat Lampiran">{templateSource ? <a className="ris-attachment-template-link" href={templateSource} download={requirement.template.name}><Icon name="download" size={16} /><span>{requirement.template.name}</span></a> : <span className="ris-attachment-template-empty">Templat tidak disediakan</span>}</td>
+                  <td data-label="Unggah Lampiran"><AdditionalAttachmentUpload requirement={requirement} file={fileFor(requirement.category)} onFile={file => setFixedFile(requirement, file)} onRemove={() => removeFixedFile(requirement.category)} /></td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+        </div>}
+      </section>}
 
-      <div className="ris-wizard-actions"><div>{step > 1 && <Button type="button" tone="gray" pill onClick={() => { setError(''); setStep(value => value - 1); }}>Back</Button>}</div><div>{step < 5 ? <Button type="button" pill onClick={next}>Next</Button> : <React.Fragment><Button type="button" tone="gray" pill onClick={() => persist(existing ? existing.status : STATUS.DRAFT, '/ris')}>Simpan Draft</Button><Button type="button" pill onClick={submit}>Submit</Button></React.Fragment>}</div></div>
+      <div className="ris-wizard-actions"><div>{step > 1 && <Button type="button" tone="gray" pill onClick={() => { setError(''); setStep(value => value - 1); }}>Kembali</Button>}</div><div>{savedAt && !archiveMode && <span className="ris-draft-saved-status" role="status"><Icon name="check" size={15} />Draf tersimpan</span>}{archiveMode && <Button type="button" tone="blue" pill onClick={() => { persist(existing ? existing.status : STATUS.DRAFT, '/ris/arsip'); showToast({ tone: 'success', title: 'Perubahan tersimpan', message: 'Data penelitian di arsip berhasil diperbarui.' }); }}>Simpan Perubahan</Button>}{!archiveMode && <Button type="button" tone="gray" pill onClick={saveDraft}>{existing && existing.status === STATUS.REVISION ? 'Simpan Revisi' : 'Simpan Draf'}</Button>}{step < 5 ? <Button type="button" pill onClick={next}>Selanjutnya</Button> : !archiveMode && <Button type="button" pill onClick={submit}>Kirim</Button>}</div></div>
       {revisionOpen && <Modal title="Catatan Revisi" onClose={() => setRevisionOpen(false)}><div className="ris-modal-body"><p className="ris-prewrap">{existing.decision.notes}</p><div className="ris-modal-actions"><Button type="button" tone="gray" pill onClick={() => setRevisionOpen(false)}>Tutup</Button></div></div></Modal>}
     </div>
   );
 }
+
+ProposalWizardPage.propTypes = { archiveMode: PropTypes.bool };
+ProposalWizardPage.defaultProps = { archiveMode: false };

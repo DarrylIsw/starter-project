@@ -1,5 +1,6 @@
 /* eslint-disable object-curly-newline, object-property-newline, no-multiple-empty-lines, prefer-destructuring, no-use-before-define, react/prop-types */
-import { ROLE, isAdmin, isResearcher, normalizeRole } from './workflow';
+import { ROLE, canManageResearcherProfiles, isResearcher, normalizeRole } from './workflow';
+import { fileExtensionOf, validateFile } from './fileValidation';
 
 export const PROFILE_STATUS = {
   DRAFT: 'draft',
@@ -16,10 +17,10 @@ export const VERIFICATION_STATUS = {
 };
 
 export const PROFILE_STATUS_META = {
-  [PROFILE_STATUS.DRAFT]: { label: 'Draft', tone: 'gray' },
+  [PROFILE_STATUS.DRAFT]: { label: 'Draf', tone: 'gray' },
   [PROFILE_STATUS.ACTIVE]: { label: 'Aktif', tone: 'green' },
   [PROFILE_STATUS.INACTIVE]: { label: 'Nonaktif', tone: 'red' },
-  [PROFILE_STATUS.SUSPENDED]: { label: 'Suspended', tone: 'orange' },
+  [PROFILE_STATUS.SUSPENDED]: { label: 'Ditangguhkan', tone: 'orange' },
 };
 
 export const VERIFICATION_STATUS_META = {
@@ -57,7 +58,7 @@ export const PROFILE_SECTION_LABELS = {
   basic: 'Informasi Dasar',
   contact: 'Kontak',
   institution: 'Institusi',
-  researchIdentity: 'Research Identity',
+  researchIdentity: 'Identitas Penelitian',
   finance: 'Keuangan',
   emergency: 'Kontak Darurat',
 };
@@ -96,22 +97,20 @@ export const DEFAULT_PROFILE_FORM = {
 };
 
 const hasValue = value => value !== null && value !== undefined && String(value).trim() !== '';
-const getExtension = name => String(name || '').split('.').pop().toLowerCase();
 const nowIso = () => new Date().toISOString();
 
-export const isProfileAdmin = user => isAdmin(user) || normalizeRole(user && user.role) === ROLE.SUPER_ADMIN;
+export const isProfileAdmin = user => canManageResearcherProfiles(user);
 export const canOpenProfileModule = user => Boolean(user) && (isProfileAdmin(user) || isResearcher(user));
 export const isOwnProfile = (profile, user) => Boolean(profile && user && profile.userId === user.id);
 export const canViewProfile = (profile, user) => Boolean(profile && user) && (isProfileAdmin(user) || isOwnProfile(profile, user));
-const protectedTargetRoles = [ROLE.SUPER_ADMIN, ROLE.LPPM_ADMIN, ROLE.FINANCE];
-
 export const canManageProfile = (profile, user, targetAccount = null) => {
   if (!isProfileAdmin(user) || !profile) return false;
   if (isOwnProfile(profile, user)) return true;
   const actorRole = normalizeRole(user && user.role);
   const targetRole = normalizeRole(targetAccount && targetAccount.role);
   if (actorRole === ROLE.SUPER_ADMIN) return true;
-  if (actorRole === ROLE.LPPM_ADMIN) return !protectedTargetRoles.includes(targetRole);
+  if (actorRole === ROLE.MANAGER) return targetRole !== ROLE.SUPER_ADMIN;
+  if (actorRole === ROLE.ADMIN) return targetRole === ROLE.LECTURER;
   return false;
 };
 
@@ -170,14 +169,14 @@ export const getCompletenessTone = completeness => {
 export const buildProfileFromUser = (user, uid) => {
   const now = nowIso();
   const role = normalizeRole(user && user.role);
-  const roleDefaults = role === ROLE.LPPM_ADMIN ? {
+  const roleDefaults = role === ROLE.ADMIN ? {
     nidn: user.identifier || 'ADM-LPPM',
     faculty: 'LPPM',
     studyProgram: 'Administrasi Riset',
     unit: 'LPPM',
     position: 'Admin LPPM',
     functionalPosition: 'Administrator',
-  } : (role === ROLE.SUPER_ADMIN ? {
+  } : ([ROLE.MANAGER, ROLE.SUPER_ADMIN].includes(role) ? {
     nidn: user.identifier || 'MGR-LPPM',
     faculty: 'LPPM',
     studyProgram: 'Manajemen Riset',
@@ -215,11 +214,8 @@ export const validateProfileForm = profile => {
 };
 
 export const validateProfileDocument = file => {
-  if (!file) return 'File wajib dipilih.';
-  const ext = getExtension(file.name);
-  if (!ALLOWED_PROFILE_DOCUMENT_EXTENSIONS.includes(ext)) return `Format file ${ext || '-'} tidak diizinkan.`;
-  if (Number(file.size || 0) > MAX_PROFILE_DOCUMENT_SIZE) return 'Ukuran file maksimal 5 MB.';
-  return '';
+  const result = validateFile(file, { allowedExtensions: ALLOWED_PROFILE_DOCUMENT_EXTENSIONS, maxSize: MAX_PROFILE_DOCUMENT_SIZE });
+  return result.message;
 };
 
 export const createProfileDocumentMeta = (file, documentType, profileId, user, uid) => ({
@@ -229,7 +225,7 @@ export const createProfileDocumentMeta = (file, documentType, profileId, user, u
   fileUrl: `mock://researcher-documents/${profileId}/${file.name}`,
   fileName: file.name,
   fileSize: file.size,
-  fileFormat: getExtension(file.name).toUpperCase(),
+  fileFormat: fileExtensionOf(file).toUpperCase(),
   uploadedAt: nowIso(),
   uploadedBy: user.id,
   isActive: true,
@@ -268,21 +264,6 @@ export const createNotification = (userId, senderId, type, message, uid) => ({
   message,
   isRead: false,
   createdAt: nowIso(),
-});
-
-export const createEmailNotification = ({ to, subject, message, userId, entityId, type }, uid) => ({
-  id: uid('email-outbox'),
-  emailId: uid('email'),
-  to,
-  subject,
-  message,
-  userId: userId || null,
-  entityType: 'researcher_profile',
-  entityId: entityId || userId || null,
-  notificationType: type || 'profile_email',
-  status: 'queued',
-  queuedAt: nowIso(),
-  sentAt: null,
 });
 
 export const normalizeProfileForSave = (profile, documents, actor) => {
@@ -392,114 +373,4 @@ export const exportProfilesCsv = (profiles, data) => {
     ]),
   ];
   return rows.map(row => row.map(value => `"${String(value || '').replace(/"/g, '""')}"`).join(',')).join('\n');
-};
-
-export const toDbResearcherProfileSnapshot = (data, profileId) => {
-  const profile = getProfileById(data, profileId);
-  if (!profile) return null;
-  const documents = getProfileDocuments(data, profile.profileId);
-  const expertises = getExpertiseForProfile(data, profile.profileId);
-  return {
-    users: (data.systemUsers || []).filter(item => item.id === profile.userId).map(item => ({
-      user_id: item.id,
-      email: item.email,
-      password_hash: item.password ? 'demo-hash-placeholder' : null,
-      is_active: item.isActive !== false,
-      created_at: item.createdAt || null,
-      updated_at: item.updatedAt || null,
-    }))[0] || null,
-    researcher_profiles: {
-      profile_id: profile.profileId,
-      user_id: profile.userId,
-      full_name: profile.fullName,
-      front_title: profile.frontTitle,
-      back_title: profile.backTitle,
-      nidn: profile.nidn,
-      nik: profile.nik,
-      birth_place: profile.birthPlace,
-      birth_date: profile.birthDate || null,
-      gender: profile.gender,
-      nationality: profile.nationality,
-      institution_email: profile.institutionEmail,
-      alternate_email: profile.alternateEmail,
-      phone_number: profile.phoneNumber,
-      domicile_address: profile.domicileAddress,
-      correspondence_address: profile.correspondenceAddress,
-      faculty: profile.faculty,
-      study_program: profile.studyProgram,
-      unit: profile.unit,
-      position: profile.position,
-      functional_position: profile.functionalPosition,
-      nip: profile.nip,
-      orcid: profile.orcid,
-      google_scholar: profile.googleScholar,
-      sinta_id: profile.sintaId,
-      profile_photo_url: profile.profilePhoto && profile.profilePhoto.fileUrl ? profile.profilePhoto.fileUrl : null,
-      profile_photo_name: profile.profilePhoto && profile.profilePhoto.name ? profile.profilePhoto.name : null,
-      bank_name: profile.bankName,
-      bank_account_number: profile.bankAccountNumber,
-      bank_account_name: profile.bankAccountName,
-      emergency_contact_name: profile.emergencyContactName,
-      emergency_contact_relation: profile.emergencyContactRelation,
-      emergency_contact_phone: profile.emergencyContactPhone,
-      profile_status: profile.profileStatus,
-      profile_completeness: profile.profileCompleteness,
-      verification_status: profile.verificationStatus,
-      last_updated_at: profile.lastUpdatedAt,
-      last_updated_by: profile.lastUpdatedBy,
-      created_at: profile.createdAt,
-      updated_at: profile.updatedAt,
-    },
-    researcher_documents: documents.map(doc => ({
-      id: doc.id,
-      profile_id: doc.profileId,
-      document_type: doc.documentType,
-      file_url: doc.fileUrl,
-      file_size: doc.fileSize,
-      file_format: doc.fileFormat,
-      uploaded_at: doc.uploadedAt,
-      uploaded_by: doc.uploadedBy,
-      is_active: doc.isActive,
-    })),
-    researcher_expertise: expertises.map(item => ({ expertise_id: item.expertiseId, name: item.name })),
-    researcher_expertise_map: (data.researcherExpertiseMap || []).filter(item => item.profileId === profile.profileId).map(item => ({
-      id: item.id,
-      profile_id: item.profileId,
-      expertise_id: item.expertiseId,
-    })),
-    researcher_verifications: (data.researcherVerifications || []).filter(item => item.profileId === profile.profileId).map(item => ({
-      id: item.id,
-      profile_id: item.profileId,
-      admin_id: item.adminId,
-      verification_status: item.verificationStatus,
-      verification_notes: item.verificationNotes,
-      verified_by: item.verifiedBy,
-      verified_at: item.verifiedAt,
-    })),
-    researcher_status_history: (data.researcherStatusHistory || []).filter(item => item.profileId === profile.profileId).map(item => ({
-      id: item.id,
-      profile_id: item.profileId,
-      old_status: item.oldStatus,
-      new_status: item.newStatus,
-      changed_by: item.changedBy,
-      changed_at: item.changedAt,
-    })),
-    admin_assignments: (data.adminAssignments || []).filter(item => item.profileId === profile.profileId).map(item => ({
-      id: item.id,
-      profile_id: item.profileId,
-      admin_id: item.adminId,
-      assigned_at: item.assignedAt,
-      assigned_by: item.assignedBy,
-    })),
-    system_activity_logs: (data.systemActivityLogs || []).filter(item => item.entityType === 'researcher_profile' && item.entityId === profile.profileId).map(item => ({
-      log_id: item.logId || item.id,
-      user_id: item.userId,
-      action: item.action,
-      entity_type: item.entityType,
-      entity_id: item.entityId,
-      old_data: item.oldData,
-      new_data: item.newData,
-      created_at: item.createdAt,
-    })),
-  };
 };

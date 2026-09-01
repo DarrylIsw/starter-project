@@ -12,8 +12,11 @@ const port = require('./port');
 const setup = require('./middlewares/frontendMiddleware');
 const apiRoutes = require('./routes');
 const requestLogger = require('./middlewares/requestLogger');
+const requestContext = require('./middlewares/requestContext');
+const auditTrail = require('./middlewares/auditTrail');
 const { apiNotFound, errorHandler } = require('./middlewares/errorHandler');
 const { optionalUser } = require('./middlewares/auth');
+const emailDeliveryService = require('./services/emailDeliveryService');
 const isDev = process.env.NODE_ENV !== 'production';
 const ngrok = (isDev && process.env.ENABLE_TUNNEL) || argv.tunnel
   ? require('ngrok')
@@ -22,10 +25,12 @@ const { resolve } = require('path');
 const app = express();
 
 app.disable('x-powered-by');
+app.use('/api', requestContext);
+app.use('/api', requestLogger);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/api', requestLogger);
 app.use('/api', optionalUser);
+app.use('/api', auditTrail);
 
 // Load material icons
 app.use('/api/icons', (req, res) => {
@@ -72,6 +77,8 @@ app.get('*.js', (req, res, next) => {
 
 const startServer = () => app.listen(port, host, async err => {
   if (err) return logger.error(err.message);
+
+  emailDeliveryService.start();
 
   // Connect to ngrok in dev mode
   if (ngrok) {

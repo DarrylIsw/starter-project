@@ -13,33 +13,35 @@ export default function LoginPage() {
     event.preventDefault();
     setError('');
     if (login(form.email, form.password)) history.replace('/ris');
-    else setError('These credentials do not match our records.');
+    else setError('Email atau kata sandi tidak sesuai.');
   };
 
   return (
     <div className="ris-login">
       <section className="ris-login-hero">
-        <img src="/images/ris/login-background.png" alt="UMN Background" className="ris-login-bg" />
+        <img src="/images/ris/login-background.png" alt="Latar belakang UMN" className="ris-login-bg" />
         <div className="ris-login-title">
           <img src="/images/ris/4-circles.png" alt="" />
           <h1>Research Innovation and Sustainability</h1>
         </div>
       </section>
       <section className="ris-login-panel">
-        <img src="/images/ris/ris-logo.png" alt="RIS Logo" className="ris-login-logo" />
-        <h2>Sign In</h2>
+        <img src="/images/ris/ris-logo.png" alt="Logo RIS" className="ris-login-logo" />
+        <h2>Masuk</h2>
         <form onSubmit={submit}>
-          {error && <div className="ris-alert ris-alert-error">{error}</div>}
-          <input type="email" placeholder="Email" required autoComplete="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} />
-          <input type="password" placeholder="Password" required autoComplete="current-password" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} />
+          {error && <div className="ris-alert ris-alert-error" role="alert">{error}</div>}
+          <label className="ris-sr-only" htmlFor="ris-login-email">Email</label>
+          <input id="ris-login-email" type="email" placeholder="Email" required autoComplete="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} />
+          <label className="ris-sr-only" htmlFor="ris-login-password">Kata Sandi</label>
+          <input id="ris-login-password" type="password" placeholder="Kata sandi" required autoComplete="current-password" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} />
           <div className="ris-login-options">
-            <label><input type="checkbox" checked={form.remember} onChange={event => setForm({ ...form, remember: event.target.checked })} /> Remember Me</label>
-            <button type="button">Forgot password?</button>
+            <label><input type="checkbox" checked={form.remember} onChange={event => setForm({ ...form, remember: event.target.checked })} /> Ingat saya</label>
+            <button type="button">Lupa kata sandi?</button>
           </div>
-          <button type="submit" className="ris-login-submit">Log in</button>
+          <button type="submit" className="ris-login-submit">Masuk</button>
         </form>
-        <div className="ris-login-divider"><span />Or login with<span /></div>
-        <button type="button" className="ris-sso">Single Sign On (SSO)</button>
+        <div className="ris-login-divider"><span />Atau masuk dengan<span /></div>
+        <button type="button" className="ris-sso">Sistem Masuk Tunggal (SSO)</button>
       </section>
     </div>
   );

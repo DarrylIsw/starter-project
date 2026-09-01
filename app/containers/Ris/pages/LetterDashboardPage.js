@@ -1,132 +1,127 @@
-/* eslint-disable object-curly-newline, object-property-newline, no-multiple-empty-lines, prefer-destructuring, no-use-before-define, react/prop-types */
+/* eslint-disable object-curly-newline, object-property-newline, no-multiple-empty-lines, react/prop-types */
 import React from 'react';
 import { useHistory } from 'react-router-dom';
 import { useRis } from '../RisContext';
-import Icon from '../components/Icon';
-import { Button, EmptyRow } from '../components/Ui';
+import { EmptyRow, StatusBadge } from '../components/Ui';
 import { formatDate } from '../data';
-import { isAdmin, isManager } from '../workflow';
+import { getFundedResearches } from '../schemeDataWorkflow';
+import { canManageLetters } from '../workflow';
 import {
   LETTER_STATUS,
-  LETTER_TYPES,
-  canAdminReviewLetter,
-  canDownloadFinalLetter,
-  canEditLetter,
-  canGenerateLetter,
-  getActiveLettersForUser,
   getAdminLetterQueue,
-  getLetterPurposeMeta,
+  getLettersOwnedByUser,
+  getLetterResearchTitle,
   getLetterTitle,
+  getLetterTypeMeta,
   letterStatusMeta,
+  renderLetterPlainText,
 } from '../letterWorkflow';
+
+const PROCESS_FILTERS = [
+  { value: 'all', label: 'Semua Status' },
+  { value: LETTER_STATUS.SUBMITTED, label: 'Menunggu Verifikasi' },
+  { value: LETTER_STATUS.FORM_DESIGN, label: 'Penyusunan Form' },
+  { value: LETTER_STATUS.DATA_REQUIRED, label: 'Menunggu Data Lecturer' },
+  { value: LETTER_STATUS.DATA_SUBMITTED, label: 'Verifikasi Data' },
+  { value: LETTER_STATUS.REVISION_REQUIRED, label: 'Perlu Perbaikan' },
+  { value: LETTER_STATUS.GENERATED, label: 'Diterbitkan' },
+  { value: LETTER_STATUS.REJECTED, label: 'Ditolak' },
+];
+
+const downloadFinal = letter => {
+  const content = letter.generated && letter.generated.content ? letter.generated.content : renderLetterPlainText(letter);
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = (letter.generated && letter.generated.fileName) || `${letter.id}.txt`;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const managementAction = letter => {
+  if (letter.status === LETTER_STATUS.SUBMITTED) return { label: 'Periksa', tone: 'cyan' };
+  if (letter.status === LETTER_STATUS.FORM_DESIGN) return { label: 'Susun Form', tone: 'blue' };
+  if ([LETTER_STATUS.DATA_SUBMITTED, LETTER_STATUS.PRECHECKED, LETTER_STATUS.APPROVED].includes(letter.status)) return { label: 'Finalisasi', tone: 'green' };
+  return { label: 'Detail', tone: 'gray' };
+};
+
+const lecturerAction = letter => {
+  if ([LETTER_STATUS.DATA_REQUIRED, LETTER_STATUS.REVISION_REQUIRED].includes(letter.status)) return { label: 'Input Data', tone: 'orange', path: `/ris/pengajuan-surat/${letter.id}/edit` };
+  return { label: 'Detail', tone: 'gray', path: `/ris/pengajuan-surat/${letter.id}/detail` };
+};
 
 export default function LetterDashboardPage() {
   const { data, user } = useRis();
   const history = useHistory();
-  const admin = isAdmin(user);
-  const manager = isManager(user);
-  const visibleLetters = manager ? getActiveLettersForUser(data, user) : (admin ? getAdminLetterQueue(data) : getActiveLettersForUser(data, user));
-  const allUserLetters = getActiveLettersForUser(data, user);
+  const management = canManageLetters(user);
+  const letters = management ? (data.letterRequests || []) : getLettersOwnedByUser(data, user);
+  const fundedResearches = management ? [] : getFundedResearches(data, user);
+  const [statusFilter, setStatusFilter] = React.useState('all');
+  const [search, setSearch] = React.useState('');
+  const filteredLetters = letters.filter(letter => {
+    if (statusFilter !== 'all' && letter.status !== statusFilter) return false;
+    const term = search.trim().toLowerCase();
+    if (!term) return true;
+    return [getLetterTitle(letter), getLetterResearchTitle(letter, data), letter.applicant && letter.applicant.name]
+      .some(value => String(value || '').toLowerCase().includes(term));
+  });
   const stats = {
-    total: allUserLetters.length,
-    process: allUserLetters.filter(item => [LETTER_STATUS.SUBMITTED, LETTER_STATUS.PRECHECKED, LETTER_STATUS.APPROVED].includes(item.status)).length,
-    revision: allUserLetters.filter(item => [LETTER_STATUS.DRAFT_REVISION, LETTER_STATUS.REVISION_REQUIRED].includes(item.status)).length,
-    done: allUserLetters.filter(item => item.status === LETTER_STATUS.GENERATED).length,
-  };
-
-  const actionFor = letter => {
-    if (canAdminReviewLetter(letter, user)) return { label: 'Verifikasi', tone: 'cyan', path: `/ris/pengajuan-surat/${letter.id}/admin` };
-    if (canGenerateLetter(letter, user)) return { label: 'Generate', tone: 'green', path: `/ris/pengajuan-surat/${letter.id}/admin` };
-    if (canEditLetter(letter, user)) return { label: 'Edit', tone: 'yellow', path: `/ris/pengajuan-surat/${letter.id}/edit` };
-    if (canDownloadFinalLetter(letter, user)) return { label: 'Lihat Final', tone: 'green', path: `/ris/pengajuan-surat/${letter.id}/detail` };
-    return { label: 'Detail', tone: 'gray', path: `/ris/pengajuan-surat/${letter.id}/detail` };
+    total: letters.length,
+    request: letters.filter(item => item.status === LETTER_STATUS.SUBMITTED).length,
+    building: letters.filter(item => item.status === LETTER_STATUS.FORM_DESIGN).length,
+    waiting: letters.filter(item => item.status === LETTER_STATUS.DATA_REQUIRED).length,
+    verification: letters.filter(item => [LETTER_STATUS.DATA_SUBMITTED, LETTER_STATUS.PRECHECKED, LETTER_STATUS.APPROVED].includes(item.status)).length,
+    done: letters.filter(item => item.status === LETTER_STATUS.GENERATED).length,
   };
 
   return (
     <div className="ris-page ris-workspace-page ris-letter-page">
-      <div className="ris-page-heading">
-        <div>
-          <h1>Pengajuan Surat</h1>
-          <p>Workflow surat akademik dan penelitian: draft, precheck sistem, verifikasi admin, approval, generate surat, dan arsip.</p>
+      <div className="ris-page-heading"><div><h1>Pengajuan Surat</h1><p>{management ? 'Kelola permintaan, susun kebutuhan data, verifikasi, dan terbitkan surat penelitian.' : 'Ajukan surat dari penelitian yang telah didanai dan pantau proses penerbitannya.'}</p></div></div>
+
+      <section className="ris-letter-stats">
+        <div><span>Total Pengajuan</span><strong>{stats.total}</strong></div>
+        <div><span>{management ? 'Perlu Diperiksa' : 'Dalam Proses'}</span><strong>{management ? stats.request : stats.request + stats.building + stats.waiting + stats.verification}</strong></div>
+        {management && <div><span>Form Disusun</span><strong>{stats.building}</strong></div>}
+        <div><span>{management ? 'Verifikasi Final' : 'Perlu Input Data'}</span><strong>{management ? stats.verification : stats.waiting}</strong></div>
+        <div><span>Surat Diterbitkan</span><strong>{stats.done}</strong></div>
+      </section>
+
+      {!management && <section className="ris-section-spaced">
+        <div className="ris-section-title"><div><h2>Penelitian Didanai</h2><p>Pilih penelitian sebagai dasar surat. Setiap penelitian dapat memiliki lebih dari satu pengajuan.</p></div></div>
+        <div className="ris-table-wrap">
+          <table className="ris-table ris-action-table">
+            <thead><tr><th>No.</th><th>Penelitian</th><th>Skema</th><th>Tahun</th><th>Jumlah Surat</th><th>Status</th><th>Aksi</th></tr></thead>
+            <tbody>
+              {fundedResearches.map((research, index) => {
+                const scheme = (data.schemes || []).find(item => item.id === research.schemeId);
+                const count = letters.filter(letter => letter.researchId === research.id).length;
+                return <tr key={research.id}><td>{index + 1}.</td><td className="ris-proposal-cell"><strong>{research.project && research.project.title}</strong><small>{research.userName || user.name}</small></td><td>{scheme ? scheme.name : '-'}</td><td>{scheme ? scheme.year : '-'}</td><td>{count} pengajuan</td><td><StatusBadge tone="green">Didanai</StatusBadge></td><td><button type="button" className="ris-action blue" onClick={() => history.push(`/ris/pengajuan-surat/new/${research.id}`)}>Buat Surat</button></td></tr>;
+              })}
+              {fundedResearches.length === 0 && <EmptyRow colSpan={7}>Belum ada penelitian didanai yang dapat digunakan untuk mengajukan surat.</EmptyRow>}
+            </tbody>
+          </table>
         </div>
-        <div className="ris-heading-actions">
-          {(!admin || manager) && <Button tone="blue" onClick={() => history.push('/ris/pengajuan-surat/new/research_assignment')}>Buat Pengajuan</Button>}
-        </div>
-      </div>
-
-      {!admin && (
-        <>
-          <section className="ris-letter-stats">
-            <div><span>Total Pengajuan</span><strong>{stats.total}</strong></div>
-            <div><span>Dalam Proses</span><strong>{stats.process}</strong></div>
-            <div><span>Perlu Revisi</span><strong>{stats.revision}</strong></div>
-            <div><span>Selesai</span><strong>{stats.done}</strong></div>
-          </section>
-
-          <section className="ris-section-spaced">
-            <div className="ris-section-title">
-              <h2>Pilih Jenis Surat</h2>
-            </div>
-            <div className="ris-letter-type-grid">
-              {LETTER_TYPES.map(item => (
-                <button key={item.value} type="button" className="ris-letter-type-card" onClick={() => history.push(`/ris/pengajuan-surat/new/${item.value}`)}>
-                  <span><Icon name={item.icon} /></span>
-                  <strong>{item.label}</strong>
-                  <small>{item.description}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        </>
-      )}
-
-      {admin && (
-        <section className="ris-admin-summary">
-          <div className="ris-alert ris-alert-success">
-            <strong>Queue Admin LPPM</strong>
-            <span>Menampilkan surat dengan status Prechecked dan Approved. Status Generated otomatis menjadi arsip dan tetap bisa dilihat melalui detail.</span>
-          </div>
-        </section>
-      )}
+      </section>}
 
       <section className="ris-section-spaced">
-        <div className="ris-section-title">
-          <h2>{admin ? 'Queue Verifikasi Surat' : 'Riwayat Pengajuan Surat'}</h2>
+        <div className="ris-section-title"><div><h2>{management ? 'Monitoring Pengajuan Surat' : 'Riwayat Pengajuan Surat'}</h2><p>{management ? `${getAdminLetterQueue(data).length} pengajuan membutuhkan tindakan pengelola.` : 'Status diperbarui pada setiap perpindahan proses.'}</p></div></div>
+        <div className="ris-letter-filterbar">
+          <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Cari penelitian, surat, atau pemohon" aria-label="Cari pengajuan surat" />
+          <select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} aria-label="Filter status surat">{PROCESS_FILTERS.map(item => <option value={item.value} key={item.value}>{item.label}</option>)}</select>
         </div>
         <div className="ris-table-wrap">
           <table className="ris-table ris-action-table">
-            <thead>
-              <tr>
-                <th>No.</th>
-                <th>Jenis Surat</th>
-                <th>Kepentingan</th>
-                <th>Judul/Kegiatan</th>
-                {admin && <th>Pemohon</th>}
-                <th>Tanggal Submit</th>
-                <th>Status</th>
-                <th>Aksi</th>
-              </tr>
-            </thead>
+            <thead><tr><th>No.</th><th>Penelitian</th><th>Jenis Surat</th>{management && <th>Pemohon</th>}<th>Terakhir Diperbarui</th><th>Status</th><th>Aksi</th></tr></thead>
             <tbody>
-              {visibleLetters.map((letter, index) => {
+              {filteredLetters.map((letter, index) => {
                 const meta = letterStatusMeta(letter);
-                const typeMeta = LETTER_TYPES.find(item => item.value === letter.type) || {};
-                const purpose = getLetterPurposeMeta(letter.type, letter.purpose);
-                const action = actionFor(letter);
-                return (
-                  <tr key={letter.id}>
-                    <td>{index + 1}.</td>
-                    <td>{typeMeta.shortLabel || typeMeta.label}</td>
-                    <td>{purpose.label}</td>
-                    <td className="ris-title-cell" title={getLetterTitle(letter)}>{getLetterTitle(letter)}</td>
-                    {admin && <td>{letter.applicant ? letter.applicant.name : '-'}</td>}
-                    <td>{formatDate(letter.submittedAt || letter.createdAt)}</td>
-                    <td><span className={`ris-badge ${meta.tone}`}>{meta.label}</span></td>
-                    <td><button type="button" className={`ris-action ${action.tone}`} onClick={() => history.push(action.path)}>{action.label}</button></td>
-                  </tr>
-                );
+                const type = getLetterTypeMeta(letter.type);
+                const action = management ? managementAction(letter) : lecturerAction(letter);
+                const path = management ? `/ris/pengajuan-surat/${letter.id}/admin` : action.path;
+                return <tr key={letter.id}><td>{index + 1}.</td><td className="ris-proposal-cell"><strong>{getLetterResearchTitle(letter, data)}</strong><small>{letter.id}</small></td><td><strong>{letter.customName || type.shortLabel || type.label}</strong><small className="ris-table-subline">{getLetterTitle(letter)}</small></td>{management && <td>{(letter.applicant && letter.applicant.name) || '-'}</td>}<td>{formatDate(letter.updatedAt || letter.submittedAt)}</td><td><StatusBadge tone={meta.tone}>{meta.label}</StatusBadge></td><td><div className="ris-row-actions"><button type="button" className={`ris-action ${action.tone}`} onClick={() => history.push(path)}>{action.label}</button>{!management && letter.status === LETTER_STATUS.GENERATED && <button type="button" className="ris-action green" onClick={() => downloadFinal(letter)}>Unduh TXT</button>}</div></td></tr>;
               })}
-              {visibleLetters.length === 0 && <EmptyRow colSpan={admin ? 8 : 7}>{admin ? 'Belum ada surat yang menunggu verifikasi.' : 'Belum ada riwayat pengajuan surat.'}</EmptyRow>}
+              {filteredLetters.length === 0 && <EmptyRow colSpan={management ? 7 : 6}>Tidak ada pengajuan yang sesuai filter.</EmptyRow>}
             </tbody>
           </table>
         </div>

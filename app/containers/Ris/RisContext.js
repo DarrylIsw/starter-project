@@ -1,72 +1,20 @@
 /* eslint-disable object-curly-newline, object-property-newline, no-multiple-empty-lines, prefer-destructuring, no-use-before-define, react/prop-types */
 import React, {
-  createContext, useContext, useMemo, useState
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState
 } from 'react';
 import PropTypes from 'prop-types';
-import { createInitialData, DEMO_ACCOUNTS, normalizeRisData } from './data';
+import { DEMO_ACCOUNTS } from './data';
+import { prototypeDataGateway } from './dataGateway';
+import { appendWorkflowNotifications, inferMutationToast } from './notificationWorkflow';
+import { appendScheduledEmailReminders } from './emailNotificationWorkflow';
+import { clearEmailDeliveryStatusCache, syncOptionalEmailOutbox } from './emailDeliveryGateway';
+import { MANAGER_MODE, ROLE, normalizeRole } from './workflow';
 
-const DATA_KEY = 'ris-react-module-four-data-v2';
-const SESSION_KEY = 'ris-react-session-v5';
-const LEGACY_KEYS = [
-  'ris-react-module-one-data-v1',
-  'ris-react-module-two-data-v1',
-  'ris-react-module-three-data-v1',
-  'ris-react-module-four-data-v1',
-  'ris-react-session',
-  'ris-react-session-v1',
-  'ris-react-session-v2',
-  'ris-react-session-v3',
-  'ris-react-session-v4',
-];
+const EMAIL_REMINDER_REFRESH_MS = 60 * 60 * 1000;
 
-const isBrowser = () => typeof window !== 'undefined' && window.localStorage;
-
-const removeLegacyStorage = () => {
-  if (!isBrowser()) return;
-  LEGACY_KEYS.forEach(key => {
-    try {
-      window.localStorage.removeItem(key);
-    } catch (error) {
-      // ignore localStorage cleanup error
-    }
-  });
-};
-
-const readJson = (key, fallback) => {
-  try {
-    if (!isBrowser()) return fallback;
-    const value = window.localStorage.getItem(key);
-    return value ? JSON.parse(value) : fallback;
-  } catch (error) {
-    return fallback;
-  }
-};
-
-const writeJson = (key, value) => {
-  try {
-    if (isBrowser()) window.localStorage.setItem(key, JSON.stringify(value));
-  } catch (error) {
-    // ignore write error; app can still run in memory
-  }
-};
-
-const removeKey = key => {
-  try {
-    if (isBrowser()) window.localStorage.removeItem(key);
-  } catch (error) {
-    // ignore remove error
-  }
-};
-
-const normalizeStoredData = () => {
-  removeLegacyStorage();
-  try {
-    return normalizeRisData(readJson(DATA_KEY, createInitialData()));
-  } catch (error) {
-    const fresh = createInitialData();
-    writeJson(DATA_KEY, fresh);
-    return fresh;
-  }
+const normalizeManagerMode = (account, requestedMode) => {
+  if (normalizeRole(account && account.role) !== ROLE.MANAGER) return null;
+  return requestedMode === MANAGER_MODE.LECTURER ? MANAGER_MODE.LECTURER : MANAGER_MODE.MANAGEMENT;
 };
 
 const getAuthAccounts = data => {
@@ -83,16 +31,16 @@ const getAuthAccounts = data => {
 };
 
 const normalizeStoredSession = data => {
-  const session = readJson(SESSION_KEY, null);
+  const session = prototypeDataGateway.loadSession();
   if (!session || !session.email || !session.role) {
-    removeKey(SESSION_KEY);
+    prototypeDataGateway.clearSession();
     return null;
   }
 
   const normalizedEmail = String(session.email || '').trim().toLowerCase();
   const activeAccount = getAuthAccounts(data).find(account => String(account.email || '').trim().toLowerCase() === normalizedEmail && account.isActive !== false);
   if (!activeAccount) {
-    removeKey(SESSION_KEY);
+    prototypeDataGateway.clearSession();
     return null;
   }
 
@@ -101,6 +49,8 @@ const normalizeStoredSession = data => {
     name: activeAccount.name,
     email: activeAccount.email,
     role: activeAccount.role,
+    managerMode: normalizeManagerMode(activeAccount, session.managerMode),
+    adminScopes: activeAccount.adminScopes || [],
     profileId: activeAccount.profileId,
     applicantType: activeAccount.applicantType || null,
     identifier: activeAccount.identifier || null,
@@ -110,16 +60,88 @@ const normalizeStoredSession = data => {
 const RisContext = createContext(null);
 
 export function RisProvider({ children }) {
-  const [data, setDataState] = useState(() => normalizeStoredData());
-  const [user, setUserState] = useState(() => normalizeStoredSession(normalizeStoredData()));
+  const [initialState] = useState(() => {
+    const initialData = prototypeDataGateway.loadData();
+    return { data: initialData, user: normalizeStoredSession(initialData) };
+  });
+  const [data, setDataState] = useState(initialState.data);
+  const [user, setUserState] = useState(initialState.user);
+  const [toasts, setToasts] = useState([]);
+  const previousDataRef = useRef(initialState.data);
+  const suppressToastRef = useRef(false);
+
+  const dismissToast = useCallback(id => {
+    setToasts(current => current.filter(toast => toast.id !== id));
+  }, []);
+
+  const showToast = useCallback(toast => {
+    const id = `toast-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const nextToast = {
+      id,
+      tone: toast.tone || 'info',
+      title: toast.title || 'Pemberitahuan',
+      message: toast.message || '',
+    };
+    setToasts(current => [...current.slice(-2), nextToast]);
+    setTimeout(() => dismissToast(id), toast.duration || 4500);
+    return id;
+  }, [dismissToast]);
+
+  useEffect(() => {
+    const previous = previousDataRef.current;
+    previousDataRef.current = data;
+    if (suppressToastRef.current) {
+      suppressToastRef.current = false;
+      return;
+    }
+    if (!user || previous === data) return;
+    const toast = inferMutationToast(previous, data, user);
+    if (toast) showToast(toast);
+  }, [data, showToast, user]);
+
+  useEffect(() => {
+    const enqueueReminders = () => {
+      setDataState(current => {
+        const next = appendScheduledEmailReminders(current, new Date());
+        return next === current ? current : prototypeDataGateway.saveData(next);
+      });
+    };
+    enqueueReminders();
+    const timer = setInterval(enqueueReminders, EMAIL_REMINDER_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (user) syncOptionalEmailOutbox(data.emailOutbox || [], user);
+  }, [data.emailOutbox, user]);
 
   const setData = updater => {
+    // Prototype persistence stays active by design. Production replacements for
+    // every data domain are mapped in productionDataApi.reference.js.
     setDataState(current => {
       const next = typeof updater === 'function' ? updater(current) : updater;
-      const normalized = normalizeRisData(next);
-      writeJson(DATA_KEY, normalized);
-      return normalized;
+      const enriched = appendWorkflowNotifications(current, next, user);
+      return prototypeDataGateway.saveData(enriched);
     });
+  };
+
+  const markNotificationRead = notificationId => {
+    if (!notificationId) return;
+    setData(current => ({
+      ...current,
+      notifications: (current.notifications || []).map(notification => ([notification.id, notification.notificationId].includes(notificationId) ? { ...notification, isRead: true, readAt: new Date().toISOString() } : notification)),
+      notificationReadIds: [...new Set([...(current.notificationReadIds || []), notificationId])],
+    }));
+  };
+
+  const markNotificationsRead = notificationIds => {
+    const ids = [...new Set((notificationIds || []).filter(Boolean))];
+    if (!ids.length) return;
+    setData(current => ({
+      ...current,
+      notifications: (current.notifications || []).map(notification => (ids.some(id => [notification.id, notification.notificationId].includes(id)) ? { ...notification, isRead: true, readAt: new Date().toISOString() } : notification)),
+      notificationReadIds: [...new Set([...(current.notificationReadIds || []), ...ids])],
+    }));
   };
 
   const login = (email, password) => {
@@ -131,29 +153,40 @@ export function RisProvider({ children }) {
       name: account.name,
       email: account.email,
       role: account.role,
+      managerMode: normalizeManagerMode(account, MANAGER_MODE.MANAGEMENT),
+      adminScopes: account.adminScopes || [],
       profileId: account.profileId,
       applicantType: account.applicantType || null,
       identifier: account.identifier || null,
     };
-    writeJson(SESSION_KEY, session);
+    prototypeDataGateway.saveSession(session);
     setUserState(session);
     return true;
   };
 
   const logout = () => {
-    removeKey(SESSION_KEY);
+    prototypeDataGateway.clearSession();
+    clearEmailDeliveryStatusCache();
     setUserState(null);
   };
 
+  const setManagerMode = managerMode => {
+    if (!user || normalizeRole(user.role) !== ROLE.MANAGER) return;
+    const next = { ...user, managerMode: normalizeManagerMode(user, managerMode) };
+    prototypeDataGateway.saveSession(next);
+    setUserState(next);
+  };
+
   const resetDemo = () => {
-    const next = createInitialData();
-    writeJson(DATA_KEY, next);
+    suppressToastRef.current = true;
+    const next = prototypeDataGateway.resetData();
     setDataState(next);
   };
 
   const value = useMemo(() => ({
-    data, setData, user, login, logout, resetDemo
-  }), [data, user]);
+    data, setData, user, login, logout, setManagerMode, resetDemo, dataGatewayKind: prototypeDataGateway.kind,
+    toasts, showToast, dismissToast, markNotificationRead, markNotificationsRead
+  }), [data, dismissToast, showToast, toasts, user]);
 
   return <RisContext.Provider value={value}>{children}</RisContext.Provider>;
 }

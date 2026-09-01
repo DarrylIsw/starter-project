@@ -11,7 +11,6 @@ import {
   buildProfileFromUser,
   canEditProfile,
   createActivityLog,
-  createEmailNotification,
   createNotification,
   createProfileDocumentMeta,
   getExpertiseForProfile,
@@ -29,10 +28,10 @@ const sectionTabs = [
   { key: 'basic', label: 'Informasi Dasar' },
   { key: 'contact', label: 'Kontak' },
   { key: 'institution', label: 'Institusi' },
-  { key: 'identity', label: 'Research Identity' },
+  { key: 'identity', label: 'Identitas Penelitian' },
   { key: 'finance', label: 'Keuangan' },
   { key: 'emergency', label: 'Darurat' },
-  { key: 'documents', label: 'Dokumen & Expertise' },
+  { key: 'documents', label: 'Dokumen & Keahlian' },
 ];
 
 const profileToForm = profile => ({ ...DEFAULT_PROFILE_FORM, ...(profile || {}) });
@@ -66,11 +65,20 @@ export default function ResearcherProfileEditorPage({ match }) {
   const [error, setError] = useState('');
 
   const documents = useMemo(() => getProfileDocuments(data, initialProfile.profileId), [data, initialProfile.profileId]);
+  const organizationOptions = useMemo(() => {
+    const records = [...(data.researcherProfiles || []), ...(data.lecturers || [])];
+    const unique = key => [...new Set(records.map(item => item[key]).filter(Boolean))].sort();
+    return {
+      faculties: [...new Set([...unique('faculty'), 'LPPM'])].sort(),
+      programs: [...new Set([...unique('studyProgram'), ...unique('program')])].sort(),
+      units: [...new Set([...unique('unit'), 'LPPM'])].sort(),
+    };
+  }, [data.lecturers, data.researcherProfiles]);
   const admin = isProfileAdmin(user);
   const targetAccount = (data.systemUsers || []).find(item => item.id === initialProfile.userId);
 
   if (!canEditProfile(existing || initialProfile, user, targetAccount)) {
-    return <div className="ris-page"><h1>Edit Profil</h1><p className="ris-muted">Akses edit tidak diizinkan untuk profil ini.</p></div>;
+    return <div className="ris-page"><h1>Ubah Profil</h1><p className="ris-muted">Akses untuk mengubah profil ini tidak diizinkan.</p></div>;
   }
 
   const update = field => event => setForm({ ...form, [field]: event.target.value });
@@ -84,17 +92,6 @@ export default function ResearcherProfileEditorPage({ match }) {
     const normalized = normalizeProfileForSave({ ...form, profileId: initialProfile.profileId, id: initialProfile.id || initialProfile.profileId, userId: initialProfile.userId }, documents, user);
     setData(current => {
       const oldProfile = (current.researcherProfiles || []).find(item => item.profileId === normalized.profileId) || null;
-      const currentTargetAccount = (current.systemUsers || []).find(item => item.id === normalized.userId);
-      const targetEmail = normalized.institutionEmail || (currentTargetAccount && currentTargetAccount.email);
-
-      const emailRecord = admin && targetEmail ? createEmailNotification({
-        to: targetEmail,
-        subject: oldProfile ? 'Profil RIS Anda diperbarui' : 'Profil RIS Anda dibuat',
-        message: `Profil RIS ${normalized.fullName || targetEmail} ${oldProfile ? 'diperbarui' : 'dibuat'} oleh ${user.name}. Silakan cek kembali data akun Anda di sistem RIS.`,
-        userId: normalized.userId,
-        entityId: normalized.profileId,
-        type: oldProfile ? 'profile_updated' : 'profile_created',
-      }, uid) : null;
 
       let next = {
         ...current,
@@ -111,7 +108,6 @@ export default function ResearcherProfileEditorPage({ match }) {
         ],
         systemActivityLogs: [...(current.systemActivityLogs || []), createActivityLog(user, oldProfile ? 'update_profile' : 'create_profile', 'researcher_profile', normalized.profileId, oldProfile, normalized, uid)],
         notifications: [...(current.notifications || []), createNotification(normalized.userId, user.id, 'profile_updated', 'Profil peneliti berhasil diperbarui.', uid)],
-        emailOutbox: emailRecord ? [...(current.emailOutbox || []), emailRecord] : (current.emailOutbox || []),
       };
 
       next = syncProfileToDomainData(next, normalized);
@@ -134,15 +130,6 @@ export default function ResearcherProfileEditorPage({ match }) {
         meta,
       ];
       const normalized = normalizeProfileForSave(currentProfile, nextDocuments.filter(doc => doc.profileId === initialProfile.profileId && doc.isActive !== false), user);
-      const targetEmail = normalized.institutionEmail || (targetAccount && targetAccount.email);
-      const emailRecord = admin && targetEmail ? createEmailNotification({
-        to: targetEmail,
-        subject: `Dokumen RIS ${documentType} diunggah`,
-        message: `Dokumen ${documentType} untuk profil ${normalized.fullName || targetEmail} telah diunggah oleh ${user.name}.`,
-        userId: normalized.userId,
-        entityId: normalized.profileId,
-        type: 'document_uploaded',
-      }, uid) : null;
       let next = {
         ...current,
         researcherDocuments: nextDocuments,
@@ -151,7 +138,6 @@ export default function ResearcherProfileEditorPage({ match }) {
           : [...(current.researcherProfiles || []), normalized],
         systemActivityLogs: [...(current.systemActivityLogs || []), createActivityLog(user, 'upload_document', 'researcher_profile', normalized.profileId, null, meta, uid)],
         notifications: [...(current.notifications || []), createNotification(normalized.userId, user.id, 'document_uploaded', `Dokumen ${documentType} berhasil diunggah.`, uid)],
-        emailOutbox: emailRecord ? [...(current.emailOutbox || []), emailRecord] : (current.emailOutbox || []),
       };
       next = syncProfileToDomainData(next, normalized);
       return next;
@@ -196,9 +182,12 @@ export default function ResearcherProfileEditorPage({ match }) {
 
   return (
     <div className="ris-page ris-workspace-page ris-profile-page">
-      <div className="ris-page-head"><PageBack onClick={() => history.goBack()} /><div><h1>{admin ? 'Edit Profil Peneliti' : 'Profil Saya'}</h1><p className="ris-muted">Data ini menjadi single source of truth untuk penelitian internal, surat, penelitian eksternal, dan dashboard LPPM.</p></div></div>
+      <div className="ris-page-head"><PageBack onClick={() => history.goBack()} /><div><h1>{admin ? 'Ubah Profil Peneliti' : 'Profil Saya'}</h1><p className="ris-muted">Data ini menjadi sumber data utama untuk penelitian internal, surat, penelitian eksternal, dan dasbor LPPM.</p></div></div>
       {error && <div className="ris-alert ris-alert-error">{error}</div>}
       <div className="ris-wizard-tabs profile-tabs">{sectionTabs.map(tab => <button key={tab.key} type="button" className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)}>{tab.label}</button>)}</div>
+      <datalist id="ris-faculty-options">{organizationOptions.faculties.map(item => <option value={item} key={item} />)}</datalist>
+      <datalist id="ris-program-options">{organizationOptions.programs.map(item => <option value={item} key={item} />)}</datalist>
+      <datalist id="ris-unit-options">{organizationOptions.units.map(item => <option value={item} key={item} />)}</datalist>
 
       <section className="ris-card">
         {activeTab === 'basic' && <div className="ris-form-grid two">
@@ -206,7 +195,7 @@ export default function ResearcherProfileEditorPage({ match }) {
             <div className="ris-profile-photo-field">
               <div className="ris-profile-avatar ris-profile-avatar-sm">{initials(form.fullName)}</div>
               <div>
-                <FileDrop file={form.profilePhoto || null} accept=".png,.jpg,.jpeg" onFile={file => setForm({ ...form, profilePhoto: profilePhotoMeta(file, initialProfile.profileId) })} label="Upload foto profil JPG/PNG" />
+                <FileDrop file={form.profilePhoto || null} accept=".png,.jpg,.jpeg" onFile={file => setForm({ ...form, profilePhoto: profilePhotoMeta(file, initialProfile.profileId) })} label="Unggah foto profil JPG/PNG" />
                 {form.profilePhoto && <button type="button" className="ris-text-danger" onClick={() => setForm({ ...form, profilePhoto: null })}>Hapus foto profil</button>}
               </div>
             </div>
@@ -214,47 +203,47 @@ export default function ResearcherProfileEditorPage({ match }) {
           <Field label="Gelar Depan"><input value={form.frontTitle || ''} onChange={update('frontTitle')} /></Field>
           <Field label="Nama Lengkap" required><input value={form.fullName || ''} onChange={update('fullName')} /></Field>
           <Field label="Gelar Belakang"><input value={form.backTitle || ''} onChange={update('backTitle')} /></Field>
-          <Field label="NIDN" required><input value={form.nidn || ''} onChange={update('nidn')} /></Field>
-          <Field label="NIK"><input value={form.nik || ''} onChange={update('nik')} /></Field>
+          <Field label="NIDN" required><input value={form.nidn || ''} onChange={update('nidn')} inputMode="numeric" autoComplete="off" /></Field>
+          <Field label="NIK"><input value={form.nik || ''} onChange={update('nik')} inputMode="numeric" autoComplete="off" /></Field>
           <Field label="Tempat Lahir"><input value={form.birthPlace || ''} onChange={update('birthPlace')} /></Field>
           <Field label="Tanggal Lahir"><input type="date" value={form.birthDate || ''} onChange={update('birthDate')} /></Field>
-          <Field label="Gender"><select value={form.gender || ''} onChange={update('gender')}><option value="">Pilih</option><option>Laki-laki</option><option>Perempuan</option></select></Field>
-          <Field label="Kewarganegaraan"><input value={form.nationality || ''} onChange={update('nationality')} /></Field>
+          <Field label="Jenis Kelamin"><select value={form.gender || ''} onChange={update('gender')}><option value="">Pilih</option><option>Laki-laki</option><option>Perempuan</option></select></Field>
+          <Field label="Kewarganegaraan"><select value={form.nationality || ''} onChange={update('nationality')}><option value="">Pilih</option><option value="Indonesia">Indonesia</option><option value="Warga Negara Asing">Warga Negara Asing</option></select></Field>
         </div>}
 
         {activeTab === 'contact' && <div className="ris-form-grid two">
-          <Field label="Email Institusi" required><input value={form.institutionEmail || ''} onChange={update('institutionEmail')} /></Field>
-          <Field label="Email Alternatif"><input value={form.alternateEmail || ''} onChange={update('alternateEmail')} /></Field>
-          <Field label="No. HP" required><input value={form.phoneNumber || ''} onChange={update('phoneNumber')} /></Field>
+          <Field label="Email Institusi" required><input type="email" autoComplete="email" value={form.institutionEmail || ''} onChange={update('institutionEmail')} /></Field>
+          <Field label="Email Alternatif"><input type="email" autoComplete="email" value={form.alternateEmail || ''} onChange={update('alternateEmail')} /></Field>
+          <Field label="No. HP" required><input type="tel" inputMode="tel" autoComplete="tel" value={form.phoneNumber || ''} onChange={update('phoneNumber')} /></Field>
           <Field label="Alamat Domisili"><textarea value={form.domicileAddress || ''} onChange={update('domicileAddress')} /></Field>
           <Field label="Alamat Korespondensi"><textarea value={form.correspondenceAddress || ''} onChange={update('correspondenceAddress')} /></Field>
         </div>}
 
         {activeTab === 'institution' && <div className="ris-form-grid two">
-          <Field label="Fakultas" required><input value={form.faculty || ''} onChange={update('faculty')} /></Field>
-          <Field label="Program Studi" required><input value={form.studyProgram || ''} onChange={update('studyProgram')} /></Field>
-          <Field label="Unit"><input value={form.unit || ''} onChange={update('unit')} /></Field>
-          <Field label="Posisi" required><input value={form.position || ''} onChange={update('position')} /></Field>
-          <Field label="Jabatan Fungsional"><input value={form.functionalPosition || ''} onChange={update('functionalPosition')} /></Field>
+          <Field label="Fakultas" required><input list="ris-faculty-options" value={form.faculty || ''} onChange={update('faculty')} placeholder="Pilih atau ketik fakultas" /></Field>
+          <Field label="Program Studi" required><input list="ris-program-options" value={form.studyProgram || ''} onChange={update('studyProgram')} placeholder="Pilih atau ketik program studi" /></Field>
+          <Field label="Unit"><input list="ris-unit-options" value={form.unit || ''} onChange={update('unit')} placeholder="Pilih atau ketik unit" /></Field>
+          <Field label="Posisi" required><select value={form.position || ''} onChange={update('position')}><option value="">Pilih posisi</option>{[['Dosen Fulltime', 'Dosen Penuh Waktu'], ['Dosen Homebase', 'Dosen Tetap Program Studi'], ['Admin LPPM', 'Administrator LPPM'], ['Manager LPPM', 'Manajer LPPM'], ['Super Admin', 'Administrator Utama'], ['Staf LPPM', 'Staf LPPM']].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></Field>
+          <Field label="Jabatan Fungsional"><select value={form.functionalPosition || ''} onChange={update('functionalPosition')}><option value="">Pilih jabatan</option>{[['Tenaga Pengajar', 'Tenaga Pengajar'], ['Asisten Ahli', 'Asisten Ahli'], ['Lektor', 'Lektor'], ['Lektor Kepala', 'Lektor Kepala'], ['Profesor', 'Profesor'], ['Administrator', 'Administrator'], ['Manager', 'Manajer']].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></Field>
           <Field label="NIP"><input value={form.nip || ''} onChange={update('nip')} /></Field>
         </div>}
 
         {activeTab === 'identity' && <div className="ris-form-grid two">
-          <Field label="ORCID"><input value={form.orcid || ''} onChange={update('orcid')} placeholder="0000-0000-0000-0000" /></Field>
-          <Field label="Google Scholar"><input value={form.googleScholar || ''} onChange={update('googleScholar')} placeholder="URL profil Google Scholar" /></Field>
+          <Field label="ORCID"><input inputMode="numeric" value={form.orcid || ''} onChange={update('orcid')} placeholder="0000-0000-0000-0000" /></Field>
+          <Field label="Google Scholar"><input type="url" value={form.googleScholar || ''} onChange={update('googleScholar')} placeholder="https://scholar.google.com/..." /></Field>
           <Field label="SINTA ID"><input value={form.sintaId || ''} onChange={update('sintaId')} /></Field>
         </div>}
 
         {activeTab === 'finance' && <div className="ris-form-grid two">
-          <Field label="Nama Bank"><input value={form.bankName || ''} onChange={update('bankName')} /></Field>
-          <Field label="Nomor Rekening"><input value={form.bankAccountNumber || ''} onChange={update('bankAccountNumber')} /></Field>
+          <Field label="Nama Bank"><select value={form.bankName || ''} onChange={update('bankName')}><option value="">Pilih bank</option>{['BCA', 'Mandiri', 'BNI', 'BRI', 'CIMB Niaga', 'BTN', 'BSI', 'Permata', 'Lainnya'].map(item => <option value={item} key={item}>{item}</option>)}</select></Field>
+          <Field label="Nomor Rekening"><input inputMode="numeric" autoComplete="off" value={form.bankAccountNumber || ''} onChange={update('bankAccountNumber')} /></Field>
           <Field label="Nama Pemilik Rekening"><input value={form.bankAccountName || ''} onChange={update('bankAccountName')} /></Field>
         </div>}
 
         {activeTab === 'emergency' && <div className="ris-form-grid two">
           <Field label="Nama Kontak Darurat"><input value={form.emergencyContactName || ''} onChange={update('emergencyContactName')} /></Field>
-          <Field label="Relasi"><input value={form.emergencyContactRelation || ''} onChange={update('emergencyContactRelation')} /></Field>
-          <Field label="No. HP Kontak Darurat"><input value={form.emergencyContactPhone || ''} onChange={update('emergencyContactPhone')} /></Field>
+          <Field label="Relasi"><select value={form.emergencyContactRelation || ''} onChange={update('emergencyContactRelation')}><option value="">Pilih relasi</option>{['Istri', 'Suami', 'Orang Tua', 'Anak', 'Saudara', 'Teman', 'Lainnya'].map(item => <option value={item} key={item}>{item}</option>)}</select></Field>
+          <Field label="No. HP Kontak Darurat"><input type="tel" inputMode="tel" value={form.emergencyContactPhone || ''} onChange={update('emergencyContactPhone')} /></Field>
         </div>}
 
         {activeTab === 'documents' && <div className="ris-two-column">
@@ -262,10 +251,10 @@ export default function ResearcherProfileEditorPage({ match }) {
             <h3>Dokumen Peneliti</h3>
             <div className="ris-form-grid two">
               <Field label="Jenis Dokumen"><select value={documentType} onChange={event => setDocumentType(event.target.value)}>{DOCUMENT_TYPES.map(item => <option key={item.value} value={item.value}>{item.label}{item.required ? ' *' : ''}</option>)}</select></Field>
-              <Field label="Upload File" alignStart><FileDrop file={documentFile} accept=".pdf,.png,.jpg,.jpeg" onFile={setDocumentFile} label="PDF/PNG/JPG/JPEG maksimal 5 MB" /></Field>
+              <Field label="Unggah Berkas" alignStart><FileDrop file={documentFile} accept=".pdf,.png,.jpg,.jpeg" onFile={setDocumentFile} label="PDF/PNG/JPG/JPEG maksimal 5 MB" /></Field>
             </div>
-            <Button tone="green" onClick={uploadDocument}>Upload Dokumen</Button>
-            <div className="ris-table-wrap mini"><table className="ris-table"><thead><tr><th>Jenis</th><th>File</th><th>Ukuran</th><th>Aksi</th></tr></thead><tbody>{documents.map(doc => <tr key={doc.id}><td>{doc.documentType}</td><td>{doc.fileName}</td><td>{((doc.fileSize || 0) / 1048576).toFixed(1)} MB</td><td><button type="button" className="ris-action red" onClick={() => deleteDocument(doc.id)}>Hapus</button></td></tr>)}</tbody></table></div>
+            <Button tone="green" onClick={uploadDocument}>Unggah Dokumen</Button>
+            <div className="ris-table-wrap mini"><table className="ris-table"><thead><tr><th>Jenis</th><th>Berkas</th><th>Ukuran</th><th>Aksi</th></tr></thead><tbody>{documents.map(doc => { const type = DOCUMENT_TYPES.find(item => item.value === doc.documentType); return <tr key={doc.id}><td>{type ? type.label : doc.documentType}</td><td>{doc.fileName}</td><td>{((doc.fileSize || 0) / 1048576).toFixed(1)} MB</td><td><button type="button" className="ris-action red" onClick={() => deleteDocument(doc.id)}>Hapus</button></td></tr>; })}</tbody></table></div>
           </div>
           <div>
             <h3>Bidang Minat</h3>

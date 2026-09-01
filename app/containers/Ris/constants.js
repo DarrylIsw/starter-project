@@ -9,4 +9,6 @@ export const RIS_ENDPOINTS = {
   letters: '/api/letters',
   externalResearch: '/api/external-research',
   researcherProfiles: '/api/researcher-profiles',
+  emailStatus: '/api/email/status',
+  emailOutbox: '/api/email/outbox',
 };

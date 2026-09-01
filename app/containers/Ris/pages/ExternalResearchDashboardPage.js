@@ -6,12 +6,15 @@ import { useRis } from '../RisContext';
 import Icon from '../components/Icon';
 import { Button, EmptyRow } from '../components/Ui';
 import { formatCurrency } from '../data';
-import { isAdmin, isManager } from '../workflow';
+import { canManageResearch, hasFullAccess } from '../workflow';
 import {
+  ACTIVITY_STATUS_OPTIONS,
+  ACTIVITY_TYPE_OPTIONS,
   EXTERNAL_STATUS,
   RESEARCH_CATEGORY_OPTIONS,
   canAdminReviewExternalReport,
   canArchiveExternalReport,
+  canCreateExternalReport,
   canEditExternalReport,
   externalReportTitle,
   externalStatusMeta,
@@ -30,16 +33,17 @@ MetricCard.propTypes = { label: PropTypes.string.isRequired, value: PropTypes.nu
 export default function ExternalResearchDashboardPage() {
   const { data, user } = useRis();
   const history = useHistory();
-  const admin = isAdmin(user);
-  const manager = isManager(user);
-  const visibleReports = manager ? (data.externalResearchReports || []) : (admin ? getAdminExternalQueue(data) : getVisibleExternalReports(data, user));
+  const admin = canManageResearch(user);
+  const fullAccess = hasFullAccess(user);
+  const createAllowed = canCreateExternalReport(user);
+  const visibleReports = fullAccess ? (data.externalResearchReports || []) : (admin ? getAdminExternalQueue(data) : getVisibleExternalReports(data, user));
   const metricsBase = admin ? (data.externalResearchReports || []) : visibleReports;
   const metrics = getExternalMetrics(metricsBase);
 
   const actionFor = report => {
-    if (canAdminReviewExternalReport(report, user)) return { label: report.submissionStatus === EXTERNAL_STATUS.SUBMITTED ? 'Review' : 'Lanjut Review', tone: 'cyan', path: `/ris/penelitian-eksternal/${report.id}/admin` };
+    if (canAdminReviewExternalReport(report, user)) return { label: report.submissionStatus === EXTERNAL_STATUS.SUBMITTED ? 'Nilai' : 'Lanjutkan Penilaian', tone: 'cyan', path: `/ris/penelitian-eksternal/${report.id}/admin` };
     if (canArchiveExternalReport(report, user)) return { label: 'Arsipkan', tone: 'purple', path: `/ris/penelitian-eksternal/${report.id}/admin` };
-    if (canEditExternalReport(report, user)) return { label: 'Edit', tone: 'yellow', path: `/ris/penelitian-eksternal/${report.id}/edit` };
+    if (canEditExternalReport(report, user)) return { label: 'Ubah', tone: 'yellow', path: `/ris/penelitian-eksternal/${report.id}/edit` };
     return { label: 'Detail', tone: 'gray', path: `/ris/penelitian-eksternal/${report.id}/detail` };
   };
 
@@ -51,14 +55,14 @@ export default function ExternalResearchDashboardPage() {
           <p>Mencatat aktivitas riset di luar skema internal: hibah, kerja sama mitra, kerja sama universitas, mandiri, PRO-STEP, dokumen, luaran, SDG, TKT, dan validasi LPPM.</p>
         </div>
         <div className="ris-heading-actions">
-          {(!admin || manager) && <Button tone="blue" onClick={() => history.push('/ris/penelitian-eksternal/new')}>Buat Laporan</Button>}
+          {createAllowed && <Button tone="blue" onClick={() => history.push('/ris/penelitian-eksternal/new')}>Buat Laporan</Button>}
         </div>
       </div>
 
       <section className="ris-letter-stats ris-external-stats">
         <MetricCard label="Total Laporan" value={metrics.totalReports} />
         <MetricCard label="Diajukan" value={metrics.submittedReports} />
-        <MetricCard label="Direview" value={metrics.underReviewReports} />
+        <MetricCard label="Sedang Dinilai" value={metrics.underReviewReports} />
         <MetricCard label="Revisi" value={metrics.revisionReports} />
         <MetricCard label="Tervalidasi" value={metrics.validatedReports} />
         <MetricCard label="Arsip" value={metrics.archivedReports} />
@@ -69,15 +73,15 @@ export default function ExternalResearchDashboardPage() {
       {admin && (
         <section className="ris-section-spaced">
           <div className="ris-section-title">
-            <h2>Monitoring Statistik Pelaporan</h2>
+            <h2>Pemantauan Statistik Pelaporan</h2>
           </div>
           <div className="ris-breakdown-grid">
             <div className="ris-breakdown-card">
-              <h3>Breakdown Kategori</h3>
-              <p><span>Grant</span><strong>{metrics.grantReports}</strong></p>
-              <p><span>Partner</span><strong>{metrics.partnerReports}</strong></p>
-              <p><span>University</span><strong>{metrics.universityReports}</strong></p>
-              <p><span>Independent</span><strong>{metrics.independentReports}</strong></p>
+              <h3>Rincian Kategori</h3>
+              <p><span>Hibah</span><strong>{metrics.grantReports}</strong></p>
+              <p><span>Mitra</span><strong>{metrics.partnerReports}</strong></p>
+              <p><span>Universitas</span><strong>{metrics.universityReports}</strong></p>
+              <p><span>Mandiri</span><strong>{metrics.independentReports}</strong></p>
             </div>
             <div className="ris-breakdown-card">
               <h3>Metrik Luaran</h3>
@@ -91,7 +95,7 @@ export default function ExternalResearchDashboardPage() {
         </section>
       )}
 
-      {!admin && (
+      {createAllowed && (
         <section className="ris-section-spaced">
           <div className="ris-section-title"><h2>Jenis Laporan yang Didukung</h2></div>
           <div className="ris-letter-type-grid">
@@ -108,8 +112,8 @@ export default function ExternalResearchDashboardPage() {
 
       <section className="ris-section-spaced">
         <div className="ris-section-title">
-          <h2>{admin ? 'Queue Monitoring Admin LPPM' : 'Riwayat Laporan Saya'}</h2>
-          {!admin && visibleReports.some(item => item.submissionStatus === EXTERNAL_STATUS.DRAFT) && <span className="ris-badge gray">Draft tersedia</span>}
+          <h2>{admin ? 'Antrean Pemantauan Administrator LPPM' : 'Riwayat Laporan Saya'}</h2>
+          {!admin && visibleReports.some(item => item.submissionStatus === EXTERNAL_STATUS.DRAFT) && <span className="ris-badge gray">Draf tersedia</span>}
         </div>
         <div className="ris-table-wrap">
           <table className="ris-table ris-action-table">
@@ -137,7 +141,7 @@ export default function ExternalResearchDashboardPage() {
                     <td className="ris-title-cell" title={externalReportTitle(report)}>{externalReportTitle(report)}</td>
                     {admin && <td>{report.userName || report.applicantName || report.userId}</td>}
                     <td>{report.activityYear}</td>
-                    <td>{report.activityStatus} / {report.activityType}</td>
+                    <td>{(ACTIVITY_STATUS_OPTIONS.find(item => item.value === report.activityStatus) || {}).label || '-'} / {(ACTIVITY_TYPE_OPTIONS.find(item => item.value === report.activityType) || {}).label || '-'}</td>
                     <td>{category.label}</td>
                     <td>{report.currency || 'IDR'} {formatCurrency(report.fundingAmount).replace('Rp ', '')}</td>
                     <td><span className={`ris-badge ${meta.tone}`}>{meta.label}</span></td>
@@ -153,8 +157,8 @@ export default function ExternalResearchDashboardPage() {
 
       <section className="ris-section-spaced">
         <div className="ris-alert ris-alert-success">
-          <strong>Database-aware</strong>
-          <span>Data UI disiapkan untuk mapping ke external_research, external_research_sdg, external_research_teaching, external_research_grants, external_research_partners, external_research_universities, external_research_independent, external_research_outputs, dan external_research_files.</span>
+          <strong>Siap Terhubung ke Basis Data</strong>
+          <span>Data antarmuka telah disiapkan agar dapat dipetakan ke struktur penelitian eksternal pada layanan backend.</span>
         </div>
       </section>
     </div>

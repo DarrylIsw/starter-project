@@ -8,4 +8,5 @@ stats.json
 # Cruft
 .DS_Store
 npm-debug.log
+.codex-*.log
 .idea

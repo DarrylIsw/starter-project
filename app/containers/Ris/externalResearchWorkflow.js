@@ -1,7 +1,9 @@
 /* eslint-disable object-curly-newline, object-property-newline, no-multiple-empty-lines, prefer-destructuring, no-use-before-define, react/prop-types */
 import {
-  ROLE, isAdmin, isManager, normalizeRole
+  canManageResearch, hasFullAccess, isResearcher, normalizeRole, ROLE
 } from './workflow';
+import { canTransition, transitionEntity } from './domainState';
+import { validateFile } from './fileValidation';
 
 export const EXTERNAL_STATUS = {
   DRAFT: 'draft',
@@ -12,23 +14,32 @@ export const EXTERNAL_STATUS = {
   ARCHIVED: 'archived',
 };
 
+export const EXTERNAL_STATUS_TRANSITIONS = {
+  [EXTERNAL_STATUS.DRAFT]: [EXTERNAL_STATUS.SUBMITTED],
+  [EXTERNAL_STATUS.SUBMITTED]: [EXTERNAL_STATUS.UNDER_REVIEW],
+  [EXTERNAL_STATUS.UNDER_REVIEW]: [EXTERNAL_STATUS.REVISION_REQUESTED, EXTERNAL_STATUS.VALIDATED],
+  [EXTERNAL_STATUS.REVISION_REQUESTED]: [EXTERNAL_STATUS.SUBMITTED],
+  [EXTERNAL_STATUS.VALIDATED]: [EXTERNAL_STATUS.ARCHIVED],
+  [EXTERNAL_STATUS.ARCHIVED]: [],
+};
+
 export const EXTERNAL_STATUS_META = {
-  [EXTERNAL_STATUS.DRAFT]: { label: 'Draft', tone: 'gray' },
-  [EXTERNAL_STATUS.SUBMITTED]: { label: 'Submitted', tone: 'cyan' },
-  [EXTERNAL_STATUS.UNDER_REVIEW]: { label: 'Under Review', tone: 'blue' },
-  [EXTERNAL_STATUS.REVISION_REQUESTED]: { label: 'Revision Requested', tone: 'orange' },
-  [EXTERNAL_STATUS.VALIDATED]: { label: 'Validated', tone: 'green' },
-  [EXTERNAL_STATUS.ARCHIVED]: { label: 'Archived', tone: 'purple' },
+  [EXTERNAL_STATUS.DRAFT]: { label: 'Draf', tone: 'gray' },
+  [EXTERNAL_STATUS.SUBMITTED]: { label: 'Diajukan', tone: 'cyan' },
+  [EXTERNAL_STATUS.UNDER_REVIEW]: { label: 'Sedang Ditinjau', tone: 'blue' },
+  [EXTERNAL_STATUS.REVISION_REQUESTED]: { label: 'Perlu Revisi', tone: 'orange' },
+  [EXTERNAL_STATUS.VALIDATED]: { label: 'Tervalidasi', tone: 'green' },
+  [EXTERNAL_STATUS.ARCHIVED]: { label: 'Diarsipkan', tone: 'purple' },
 };
 
 export const ACTIVITY_STATUS_OPTIONS = [
-  { value: 'planned', label: 'Planned' },
-  { value: 'ongoing', label: 'Ongoing' },
-  { value: 'completed', label: 'Completed' },
+  { value: 'planned', label: 'Direncanakan' },
+  { value: 'ongoing', label: 'Sedang Berjalan' },
+  { value: 'completed', label: 'Selesai' },
 ];
 
 export const ACTIVITY_TYPE_OPTIONS = [
-  { value: 'external', label: 'External' },
+  { value: 'external', label: 'Eksternal' },
   { value: 'mandiri', label: 'Mandiri' },
 ];
 
@@ -45,10 +56,10 @@ export const RIP_OPTIONS = [
 ].map(item => ({ value: item, label: item }));
 
 export const RESEARCH_CATEGORY_OPTIONS = [
-  { value: 'grant', label: 'Grant / Hibah', description: 'Hibah penelitian nasional atau internasional.', icon: 'document' },
-  { value: 'partner', label: 'Partner Collaboration', description: 'Kerja sama penelitian dengan mitra non-perguruan tinggi.', icon: 'layers' },
-  { value: 'university', label: 'University Collaboration', description: 'Kerja sama dengan universitas dalam atau luar negeri.', icon: 'dashboard' },
-  { value: 'independent', label: 'Independent / Mandiri', description: 'Penelitian mandiri, PRO-STEP, atau kerja sama mandiri.', icon: 'report' },
+  { value: 'grant', label: 'Hibah', description: 'Hibah penelitian nasional atau internasional.', icon: 'document' },
+  { value: 'partner', label: 'Kolaborasi Mitra', description: 'Kerja sama penelitian dengan mitra non-perguruan tinggi.', icon: 'layers' },
+  { value: 'university', label: 'Kolaborasi Universitas', description: 'Kerja sama dengan universitas dalam atau luar negeri.', icon: 'dashboard' },
+  { value: 'independent', label: 'Penelitian Mandiri', description: 'Penelitian mandiri, PRO-STEP, atau kerja sama mandiri.', icon: 'report' },
 ];
 
 export const GRANT_TYPE_OPTIONS = [
@@ -64,23 +75,23 @@ export const INDEPENDENT_TYPE_OPTIONS = [
 ];
 
 export const OUTPUT_TYPE_OPTIONS = [
-  { value: 'journal', label: 'Journal' },
-  { value: 'prototype', label: 'Prototype' },
-  { value: 'proceeding', label: 'Proceeding' },
+  { value: 'journal', label: 'Jurnal' },
+  { value: 'prototype', label: 'Prototipe' },
+  { value: 'proceeding', label: 'Prosiding' },
   { value: 'hki', label: 'HKI' },
-  { value: 'book', label: 'Book' },
+  { value: 'book', label: 'Buku' },
 ];
 
 export const EXTERNAL_DOCUMENT_TYPES = [
   { value: 'proposal', label: 'Proposal' },
-  { value: 'budget_plan', label: 'Budget Plan / RAB' },
-  { value: 'contract', label: 'Contract' },
+  { value: 'budget_plan', label: 'Rencana Anggaran Biaya (RAB)' },
+  { value: 'contract', label: 'Kontrak' },
   { value: 'mou', label: 'MoU / MoA' },
-  { value: 'collaboration_proof', label: 'Collaboration Proof' },
-  { value: 'student_involvement', label: 'Student Involvement' },
-  { value: 'final_report', label: 'Final Report' },
-  { value: 'integration_proof', label: 'Integration Proof' },
-  { value: 'other', label: 'Other Supporting Document' },
+  { value: 'collaboration_proof', label: 'Bukti Kolaborasi' },
+  { value: 'student_involvement', label: 'Keterlibatan Mahasiswa' },
+  { value: 'final_report', label: 'Laporan Akhir' },
+  { value: 'integration_proof', label: 'Bukti Integrasi' },
+  { value: 'other', label: 'Dokumen Pendukung Lain' },
 ];
 
 export const REQUIRED_DOCUMENTS_BY_ACTIVITY_STATUS = {
@@ -94,29 +105,62 @@ export const MAX_EXTERNAL_FILE_SIZE = 15 * 1024 * 1024;
 
 const hasValue = value => value !== null && value !== undefined && String(value).trim() !== '';
 const numberValue = value => Number(value || 0);
-const getExtension = name => String(name || '').split('.').pop().toLowerCase();
 const fieldError = (field, message) => ({ field, message });
 
-export const isExternalReporter = user => [ROLE.RESEARCHER, ROLE.REVIEWER].includes(normalizeRole(user && user.role));
+export const isExternalReporter = user => isResearcher(user);
 export const externalStatus = report => (report && report.submissionStatus) || EXTERNAL_STATUS.DRAFT;
+export const canTransitionExternalStatus = (report, nextStatus) => canTransition(EXTERNAL_STATUS_TRANSITIONS, externalStatus(report), nextStatus);
+export const transitionExternalStatus = (report, nextStatus, changes = {}) => transitionEntity({
+  entity: report,
+  currentStatus: externalStatus(report),
+  nextStatus,
+  transitions: EXTERNAL_STATUS_TRANSITIONS,
+  statusFields: ['submissionStatus'],
+  changes,
+});
 export const externalStatusMeta = report => EXTERNAL_STATUS_META[externalStatus(report)] || EXTERNAL_STATUS_META[EXTERNAL_STATUS.DRAFT];
 export const getCategoryMeta = category => RESEARCH_CATEGORY_OPTIONS.find(item => item.value === category) || RESEARCH_CATEGORY_OPTIONS[0];
 export const getOutputTypeLabel = value => (OUTPUT_TYPE_OPTIONS.find(item => item.value === value) || {}).label || value || '-';
 export const getDocumentTypeLabel = value => (EXTERNAL_DOCUMENT_TYPES.find(item => item.value === value) || {}).label || value || '-';
 
-export const canCreateExternalReport = user => isExternalReporter(user) || isManager(user);
+const EXTERNAL_DETAIL_FIELD_LABELS = {
+  grantType: 'Jenis Hibah',
+  grantName: 'Nama Hibah',
+  grantLink: 'Tautan Hibah',
+  researchStatus: 'Status Penelitian',
+  fundingAmount: 'Nominal Pendanaan',
+  partnerName: 'Nama Mitra',
+  partnerRepresentative: 'Perwakilan Mitra',
+  partnerOrigin: 'Asal Mitra',
+  partnerUniversity: 'Universitas Mitra',
+  mouStatus: 'Status MoU',
+  independentType: 'Jenis Penelitian Mandiri',
+};
+
+const EXTERNAL_DETAIL_VALUE_LABELS = {
+  researchStatus: { awarded: 'Pendanaan Diberikan', running: 'Sedang Berjalan', completed: 'Selesai' },
+  partnerOrigin: { local: 'Lokal', national: 'Nasional', international: 'Internasional' },
+  mouStatus: { yes: 'Tersedia', no: 'Belum Tersedia' },
+};
+
+export const getExternalTypeDetailRows = detail => Object.entries(detail || {}).map(([key, value]) => [
+  EXTERNAL_DETAIL_FIELD_LABELS[key] || String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, character => character.toUpperCase()),
+  (EXTERNAL_DETAIL_VALUE_LABELS[key] && EXTERNAL_DETAIL_VALUE_LABELS[key][value]) || String(value || '-'),
+]);
+
+export const canCreateExternalReport = user => Boolean(user) && normalizeRole(user.role) === ROLE.LECTURER;
 export const canViewExternalReport = (report, user) => {
   if (!report || !user) return false;
-  if (isAdmin(user)) return true;
+  if (canManageResearch(user)) return true;
   return report.userId === user.id || report.createdBy === user.id;
 };
 export const canEditExternalReport = (report, user) => canViewExternalReport(report, user)
-  && (isExternalReporter(user) || isManager(user))
+  && (isExternalReporter(user) || hasFullAccess(user))
   && [EXTERNAL_STATUS.DRAFT, EXTERNAL_STATUS.REVISION_REQUESTED].includes(externalStatus(report));
 export const canSubmitExternalReport = (report, user) => canEditExternalReport(report, user);
-export const canAdminReviewExternalReport = (report, user) => isAdmin(user)
+export const canAdminReviewExternalReport = (report, user) => canManageResearch(user)
   && [EXTERNAL_STATUS.SUBMITTED, EXTERNAL_STATUS.UNDER_REVIEW].includes(externalStatus(report));
-export const canArchiveExternalReport = (report, user) => isAdmin(user) && externalStatus(report) === EXTERNAL_STATUS.VALIDATED;
+export const canArchiveExternalReport = (report, user) => canManageResearch(user) && externalStatus(report) === EXTERNAL_STATUS.VALIDATED;
 
 export const createExternalReportDraft = (user, uid) => {
   const now = new Date().toISOString();
@@ -194,7 +238,7 @@ export const validateExternalReport = (report, data, user, options = {}) => {
   const year = Number(report.activityYear);
   if (!Number.isInteger(year) || year < 2000 || year > 2100) errors.push(fieldError('activityYear', 'Tahun aktivitas harus angka valid.'));
   if (numberValue(report.fundingAmount) < 0) errors.push(fieldError('fundingAmount', 'Nominal pendanaan tidak boleh negatif.'));
-  if (!['planned', 'ongoing', 'completed'].includes(report.activityStatus)) errors.push(fieldError('activityStatus', 'Status aktivitas hanya planned, ongoing, atau completed.'));
+  if (!['planned', 'ongoing', 'completed'].includes(report.activityStatus)) errors.push(fieldError('activityStatus', 'Status aktivitas hanya dapat berupa direncanakan, sedang berjalan, atau selesai.'));
   if (!['external', 'mandiri'].includes(report.activityType)) errors.push(fieldError('activityType', 'Tipe aktivitas hanya external atau mandiri.'));
 
   const metadata = report.metadata || {};
@@ -244,9 +288,8 @@ export const validateExternalReport = (report, data, user, options = {}) => {
     }
   });
   documents.forEach(item => {
-    const ext = getExtension(item.name || item.fileName || item.fileUrl);
-    if (!ALLOWED_EXTERNAL_FILE_EXTENSIONS.includes(ext)) errors.push(fieldError('documents', `Format file ${item.name || item.fileName} tidak didukung. Gunakan pdf, docx, xlsx, atau pptx.`));
-    if (Number(item.size || item.fileSize || 0) > MAX_EXTERNAL_FILE_SIZE) errors.push(fieldError('documents', `Ukuran file ${item.name || item.fileName} melebihi 15 MB.`));
+    const validation = validateFile(item, { allowedExtensions: ALLOWED_EXTERNAL_FILE_EXTENSIONS, maxSize: MAX_EXTERNAL_FILE_SIZE });
+    if (!validation.valid) errors.push(fieldError('documents', `${item.name || item.fileName}: ${validation.message}`));
   });
 
   (report.outputs || []).forEach((output, index) => {
@@ -267,7 +310,7 @@ export const validateExternalReport = (report, data, user, options = {}) => {
 
 export const getVisibleExternalReports = (data, user) => {
   const reports = data.externalResearchReports || [];
-  if (isAdmin(user)) return reports;
+  if (canManageResearch(user)) return reports;
   return reports.filter(item => item.userId === (user && user.id) || item.createdBy === (user && user.id));
 };
 
@@ -299,113 +342,6 @@ export const getExternalMetrics = reports => {
     totalHki: byOutput('hki'),
     totalPrototypes: byOutput('prototype'),
     totalProceedings: byOutput('proceeding'),
-  };
-};
-
-export const toDbExternalResearchSnapshot = report => {
-  const id = report.id;
-  const metadata = report.metadata || {};
-  const detail = report.typeDetail || {};
-  return {
-    external_research: {
-      id,
-      user_id: report.userId,
-      created_by: report.createdBy,
-      activity_name: report.activityName,
-      research_title: report.researchTitle,
-      activity_year: Number(report.activityYear) || null,
-      activity_status: report.activityStatus,
-      activity_type: report.activityType,
-      role_in_research: report.roleInResearch,
-      organizer_origin: report.organizerOrigin,
-      funding_source: report.fundingSource,
-      funding_amount: Number(report.fundingAmount) || 0,
-      currency: report.currency,
-      submission_status: externalStatus(report),
-      created_at: report.createdAt,
-      submitted_at: report.submittedAt,
-    },
-    external_research_metadata_virtual: {
-      external_id: id,
-      rip_relation: metadata.ripRelation,
-      tkt_target: Number(metadata.tktTarget) || null,
-      sdg_involvement: Boolean(metadata.sdgInvolvement),
-      integration_to_teaching: Boolean(metadata.integrationToTeaching),
-    },
-    external_research_sdg: (metadata.sdgs || []).map(code => ({
-      id: `${id}-sdg-${code}`,
-      external_id: id,
-      sdg_code: String(code),
-    })),
-    external_research_teaching: metadata.integrationToTeaching ? {
-      id: `${id}-teaching`,
-      external_id: id,
-      course_name: metadata.courseName,
-      academic_year: metadata.academicYear,
-      proof_file: metadata.integrationProofFile ? (metadata.integrationProofFile.fileUrl || metadata.integrationProofFile.name) : null,
-    } : null,
-    external_research_grants: report.category === 'grant' ? {
-      id: `${id}-grant`,
-      external_id: id,
-      grant_type: detail.grantType,
-      grant_name: detail.grantName,
-      grant_link: detail.grantLink,
-      research_status: detail.researchStatus,
-      funding_amount: Number(detail.fundingAmount || report.fundingAmount) || 0,
-      created_at: report.createdAt,
-    } : null,
-    external_research_partners: report.category === 'partner' ? {
-      id: `${id}-partner`,
-      external_id: id,
-      partner_name: detail.partnerName,
-      partner_representative: detail.partnerRepresentative,
-      partner_origin: detail.partnerOrigin,
-      created_at: report.createdAt,
-    } : null,
-    external_research_universities: report.category === 'university' ? {
-      id: `${id}-university`,
-      external_id: id,
-      university_name: detail.partnerUniversity,
-      origin: detail.partnerOrigin,
-      mou_status: detail.mouStatus,
-      created_at: report.createdAt,
-    } : null,
-    external_research_independent: report.category === 'independent' ? {
-      id: `${id}-independent`,
-      external_id: id,
-      independent_type: detail.independentType,
-      created_at: report.createdAt,
-    } : null,
-    external_research_outputs: (report.outputs || []).map(output => ({
-      output_id: output.id,
-      external_id: id,
-      output_type: output.outputType,
-      title: output.title,
-      year_virtual: Number(output.year) || null,
-      description_virtual: output.description || '',
-      link_virtual: output.link || '',
-      file_virtual: output.file ? (output.file.fileUrl || output.file.name) : null,
-    })),
-    external_research_files: (report.documents || []).map(file => ({
-      id: file.id,
-      external_id: id,
-      file_type: file.fileType,
-      file_url: file.fileUrl || file.name || file.fileName,
-      uploaded_by: file.uploadedBy || report.userId,
-      uploaded_at: file.uploadedAt,
-      file_name_virtual: file.name || file.fileName,
-      file_size_virtual: file.size || file.fileSize,
-      mime_type_virtual: file.type || file.mimeType,
-    })),
-    report_reviews_virtual: (report.reviews || []).map(review => ({
-      id: review.id,
-      external_id: id,
-      reviewer_id: review.reviewerId,
-      decision: review.decision,
-      notes: review.notes,
-      reviewed_at: review.reviewedAt,
-      checklist: review.checklist || {},
-    })),
   };
 };
 

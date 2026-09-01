@@ -4,6 +4,7 @@ const internalResearchRoutes = require('./internalResearchRoutes');
 const letterRoutes = require('./letterRoutes');
 const externalResearchRoutes = require('./externalResearchRoutes');
 const researcherProfileRoutes = require('./researcherProfileRoutes');
+const emailRoutes = require('./emailRoutes');
 
 const router = express.Router();
 
@@ -12,5 +13,6 @@ router.use('/research', internalResearchRoutes);
 router.use('/letters', letterRoutes);
 router.use('/external-research', externalResearchRoutes);
 router.use('/researcher-profiles', researcherProfileRoutes);
+router.use('/email', emailRoutes);
 
 module.exports = router;
