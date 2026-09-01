@@ -47,7 +47,7 @@ describe('RIS reporting deadlines', () => {
     const period = type => ({
       type, label: `Report ${type}`, openAt: '2026-07-15T00:00', dueAt: '2026-07-17T00:00'
     });
-    assert.match(validateReportingSchedule([period(REPORT_TYPE.INTERIM)]), /Laporan Final/);
+    assert.match(validateReportingSchedule([period(REPORT_TYPE.INTERIM)]), /Laporan Akhir/);
     assert.match(validateReportingSchedule([period(REPORT_TYPE.FINAL), period(REPORT_TYPE.FINAL)]), /hanya boleh/);
     assert.strictEqual(validateReportingSchedule([period(REPORT_TYPE.FINAL)]), '');
     assert.strictEqual(validateReportingSchedule([period(REPORT_TYPE.INTERIM), period(REPORT_TYPE.FINAL), period(REPORT_TYPE.OUTPUT)]), '');
